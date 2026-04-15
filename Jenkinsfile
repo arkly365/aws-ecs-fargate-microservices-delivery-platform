@@ -42,6 +42,7 @@ pipeline {
                     docker --version
                     mvn -v
                     git --version
+					python3 --version
                 '''
             }
         }
@@ -116,44 +117,58 @@ pipeline {
             }
         }
 
-        stage('Prepare New Task Definition JSON') {
-            steps {
-                script {
-                    def slurper = new JsonSlurperClassic()
-                    def taskDef = slurper.parse(new File("${env.WORKSPACE}/current-task-def.json"))
+		stage('Prepare New Task Definition JSON') {
+			steps {
+				sh '''
+					set -e
 
-                    taskDef.containerDefinitions.each { c ->
-                        if (c.name == env.CONTAINER_NAME) {
-                            c.image = env.IMAGE_URI
-                        }
-                    }
+					python3 - <<'PY'
+		import json
 
-                    def registerPayload = [:]
-                    registerPayload.family                  = taskDef.family
-                    registerPayload.networkMode             = taskDef.networkMode
-                    registerPayload.containerDefinitions    = taskDef.containerDefinitions
-                    registerPayload.requiresCompatibilities = taskDef.requiresCompatibilities
-                    registerPayload.cpu                     = taskDef.cpu
-                    registerPayload.memory                  = taskDef.memory
+		container_name = "${CONTAINER_NAME}"
+		image_uri = "${IMAGE_URI}"
 
-                    if (taskDef.taskRoleArn)          registerPayload.taskRoleArn = taskDef.taskRoleArn
-                    if (taskDef.executionRoleArn)     registerPayload.executionRoleArn = taskDef.executionRoleArn
-                    if (taskDef.volumes)              registerPayload.volumes = taskDef.volumes
-                    if (taskDef.placementConstraints) registerPayload.placementConstraints = taskDef.placementConstraints
-                    if (taskDef.runtimePlatform)      registerPayload.runtimePlatform = taskDef.runtimePlatform
-                    if (taskDef.proxyConfiguration)   registerPayload.proxyConfiguration = taskDef.proxyConfiguration
-                    if (taskDef.inferenceAccelerators) registerPayload.inferenceAccelerators = taskDef.inferenceAccelerators
-                    if (taskDef.ephemeralStorage)     registerPayload.ephemeralStorage = taskDef.ephemeralStorage
-                    if (taskDef.pidMode)              registerPayload.pidMode = taskDef.pidMode
-                    if (taskDef.ipcMode)              registerPayload.ipcMode = taskDef.ipcMode
+		with open("current-task-def.json", "r", encoding="utf-8") as f:
+			task_def = json.load(f)
 
-                    writeFile file: 'new-task-def.json',
-                              text: JsonOutput.prettyPrint(JsonOutput.toJson(registerPayload))
+		for c in task_def.get("containerDefinitions", []):
+			if c.get("name") == container_name:
+				c["image"] = image_uri
 
-                    echo "New task definition JSON prepared with image: ${env.IMAGE_URI}"
-                }
-            }
-        }
+		register_payload = {
+			"family": task_def["family"],
+			"networkMode": task_def["networkMode"],
+			"containerDefinitions": task_def["containerDefinitions"],
+			"requiresCompatibilities": task_def["requiresCompatibilities"],
+			"cpu": task_def["cpu"],
+			"memory": task_def["memory"]
+		}
+
+		optional_fields = [
+			"taskRoleArn",
+			"executionRoleArn",
+			"volumes",
+			"placementConstraints",
+			"runtimePlatform",
+			"proxyConfiguration",
+			"inferenceAccelerators",
+			"ephemeralStorage",
+			"pidMode",
+			"ipcMode"
+		]
+
+		for field in optional_fields:
+			if field in task_def and task_def[field] not in (None, [], {}, ""):
+				register_payload[field] = task_def[field]
+
+		with open("new-task-def.json", "w", encoding="utf-8") as f:
+			json.dump(register_payload, f, indent=2)
+
+		print(f"New task definition JSON prepared with image: {image_uri}")
+		PY
+				'''
+			}
+		}
 
         stage('Register New Task Definition Revision') {
             steps {
