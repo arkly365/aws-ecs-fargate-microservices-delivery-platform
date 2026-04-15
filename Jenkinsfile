@@ -218,7 +218,7 @@ pipeline {
 						  --region ${AWS_REGION} \
 						  > register-output.json
 
-						python3 - <<'PY'
+						cat > extract_taskdef_arn.py <<'PY'
 		import json
 
 		with open("register-output.json", "r", encoding="utf-8") as f:
@@ -231,6 +231,9 @@ pipeline {
 
 		print("DEBUG registered taskDefinitionArn =", arn)
 		PY
+
+						python3 extract_taskdef_arn.py
+						rm -f extract_taskdef_arn.py
 
 						echo "===== CHECK register-output image ====="
 						grep -n '"image"' register-output.json || true
