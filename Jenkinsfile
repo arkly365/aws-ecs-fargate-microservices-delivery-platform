@@ -122,11 +122,11 @@ pipeline {
 				sh '''
 					set -e
 
-					python3 - <<'PY'
+					python3 -c '
 		import json
 
-		container_name = "${CONTAINER_NAME}"
-		image_uri = "${IMAGE_URI}"
+		container_name = "'"${CONTAINER_NAME}"'"
+		image_uri = "'"${IMAGE_URI}"'"
 
 		with open("current-task-def.json", "r", encoding="utf-8") as f:
 			task_def = json.load(f)
@@ -164,8 +164,8 @@ pipeline {
 		with open("new-task-def.json", "w", encoding="utf-8") as f:
 			json.dump(register_payload, f, indent=2)
 
-		print(f"New task definition JSON prepared with image: {image_uri}")
-		PY
+		print("New task definition JSON prepared with image:", image_uri)
+		'
 				'''
 			}
 		}
