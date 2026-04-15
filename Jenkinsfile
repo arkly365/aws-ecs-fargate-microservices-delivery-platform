@@ -125,16 +125,43 @@ pipeline {
 					cat > prepare_taskdef.py <<'PY'
 		import json
 		import os
+		import sys
 
-		container_name = os.environ["CONTAINER_NAME"]
-		image_uri = os.environ["IMAGE_URI"]
+		container_name = os.environ.get("CONTAINER_NAME")
+		image_uri = os.environ.get("IMAGE_URI")
+
+		print("DEBUG CONTAINER_NAME =", container_name)
+		print("DEBUG IMAGE_URI      =", image_uri)
+
+		if not container_name:
+			print("ERROR: CONTAINER_NAME is empty")
+			sys.exit(1)
+
+		if not image_uri:
+			print("ERROR: IMAGE_URI is empty")
+			sys.exit(1)
 
 		with open("current-task-def.json", "r", encoding="utf-8") as f:
 			task_def = json.load(f)
 
-		for c in task_def.get("containerDefinitions", []):
+		containers = task_def.get("containerDefinitions", [])
+		print("DEBUG container names in current-task-def.json =",
+			  [c.get("name") for c in containers])
+
+		matched = False
+
+		for c in containers:
+			print("DEBUG checking container =", c.get("name"), "image =", c.get("image"))
 			if c.get("name") == container_name:
+				print("DEBUG matched container =", container_name)
+				print("DEBUG old image =", c.get("image"))
 				c["image"] = image_uri
+				print("DEBUG new image =", c.get("image"))
+				matched = True
+
+		if not matched:
+			print(f"ERROR: container name [{container_name}] not found in task definition")
+			sys.exit(1)
 
 		register_payload = {
 			"family": task_def["family"],
@@ -165,38 +192,55 @@ pipeline {
 		with open("new-task-def.json", "w", encoding="utf-8") as f:
 			json.dump(register_payload, f, indent=2)
 
-		print("New task definition JSON prepared with image:", image_uri)
+		print("DEBUG new-task-def.json written successfully")
 		PY
 
 					python3 prepare_taskdef.py
 					rm -f prepare_taskdef.py
-					cat new-task-def.json
+
+					echo "===== CHECK new-task-def.json image ====="
+					grep -n '"image"' new-task-def.json || true
 				'''
 			}
 		}
 
-        stage('Register New Task Definition Revision') {
-            steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: "${AWS_CREDENTIALS_ID}"
-                ]]) {
-                    sh '''
-                        set -e
-                        aws ecs register-task-definition \
-                          --cli-input-json file://new-task-def.json \
-                          --region ${AWS_REGION} \
-                          --output json > register-output.json
+		stage('Register New Task Definition Revision') {
+			steps {
+				withCredentials([[
+					$class: 'AmazonWebServicesCredentialsBinding',
+					credentialsId: 'aws-ms-lab-credentials'
+				]]) {
+					sh '''
+						set -e
 
-                        aws ecs describe-task-definition \
-                          --task-definition ${TASK_FAMILY} \
-                          --region ${AWS_REGION} \
-                          --query 'taskDefinition.taskDefinitionArn' \
-                          --output text > new-taskdef-arn.txt
-                    '''
-                }
-            }
-        }
+						aws ecs register-task-definition \
+						  --cli-input-json file://new-task-def.json \
+						  --region ${AWS_REGION} \
+						  > register-output.json
+
+						python3 - <<'PY'
+		import json
+
+		with open("register-output.json", "r", encoding="utf-8") as f:
+			data = json.load(f)
+
+		arn = data["taskDefinition"]["taskDefinitionArn"]
+
+		with open("new-taskdef-arn.txt", "w", encoding="utf-8") as f:
+			f.write(arn)
+
+		print("DEBUG registered taskDefinitionArn =", arn)
+		PY
+
+						echo "===== CHECK register-output image ====="
+						grep -n '"image"' register-output.json || true
+
+						echo "===== CHECK new-taskdef-arn.txt ====="
+						cat new-taskdef-arn.txt
+					'''
+				}
+			}
+		}
 
         stage('Update ECS Service') {
             steps {
