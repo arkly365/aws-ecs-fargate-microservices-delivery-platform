@@ -89,15 +89,15 @@ pipeline {
                             returnStdout: true
                         ).trim()
 
-                        echo "Changed files:\\n${changedFiles}"
+                        echo "Changed files:\n${changedFiles}"
 
                         def changedList = changedFiles ? changedFiles.split("\\n") : []
 
-                        if (changedList.any { it.startsWith("service-a/") }) {
+                        if (changedList.any { it.startsWith('service-a/') }) {
                             env.DEPLOY_SERVICE_A = 'true'
                         }
 
-                        if (changedList.any { it.startsWith("service-b/") }) {
+                        if (changedList.any { it.startsWith('service-b/') }) {
                             env.DEPLOY_SERVICE_B = 'true'
                         }
                     }
@@ -106,7 +106,7 @@ pipeline {
                     echo "DEPLOY_SERVICE_B=${env.DEPLOY_SERVICE_B}"
 
                     if (env.DEPLOY_SERVICE_A != 'true' && env.DEPLOY_SERVICE_B != 'true') {
-                        echo "No service changes detected. Deployment will be skipped."
+                        echo 'No service changes detected. Deployment will be skipped.'
                     }
                 }
             }
@@ -198,8 +198,7 @@ def deployService(String serviceModule) {
     ]]) {
         sh """
             set -e
-            aws ecr get-login-password --region ${env.AWS_REGION} | \
-            docker login --username AWS --password-stdin ${env.AWS_ACCOUNT}.dkr.ecr.${env.AWS_REGION}.amazonaws.com
+            aws ecr get-login-password --region ${env.AWS_REGION} | docker login --username AWS --password-stdin ${env.AWS_ACCOUNT}.dkr.ecr.${env.AWS_REGION}.amazonaws.com
         """
     }
 
@@ -213,6 +212,7 @@ def deployService(String serviceModule) {
             $class: 'AmazonWebServicesCredentialsBinding',
             credentialsId: 'aws-ms-lab-credentials'
         ]]) {
+
             sh """
                 set -e
 
@@ -353,7 +353,7 @@ PY
 
                 echo "===== CHECK new-taskdef-arn.txt ====="
                 cat new-taskdef-arn.txt
-            """
+            '''
 
             sh """
                 set -e
