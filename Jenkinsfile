@@ -8,9 +8,15 @@ pipeline {
 
     parameters {
         choice(
+            name: 'DEPLOY_MODE',
+            choices: ['MANUAL', 'AUTO'],
+            description: 'MANUAL=手動指定服務；AUTO=根據本次 commit 自動判斷'
+        )
+
+        choice(
             name: 'SERVICE_MODULE',
             choices: ['service-a', 'service-b'],
-            description: '選擇要部署的微服務'
+            description: 'MANUAL 模式時，要部署的微服務'
         )
     }
 
@@ -21,39 +27,6 @@ pipeline {
     }
 
     stages {
-        stage('Init Variables') {
-            steps {
-                script {
-                    env.SERVICE_DIR = params.SERVICE_MODULE
-                    env.IMAGE_TAG   = "build-${BUILD_NUMBER}"
-
-                    if (params.SERVICE_MODULE == 'service-a') {
-                        env.ECR_URI          = "${env.AWS_ACCOUNT}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/aws-ms-lab/service-a"
-                        env.ECS_SERVICE_NAME = 'aws-ms-lab-service-a-task-service-priw3f2z'
-                        env.TASK_FAMILY      = 'aws-ms-lab-service-a-task'
-                        env.CONTAINER_NAME   = 'service-a-container'
-                    } else if (params.SERVICE_MODULE == 'service-b') {
-                        env.ECR_URI          = "${env.AWS_ACCOUNT}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/aws-ms-lab/service-b"
-                        env.ECS_SERVICE_NAME = 'aws-ms-lab-service-b-task-service'   // ← 這裡改成你真正的 service-b ECS Service 名稱
-                        env.TASK_FAMILY      = 'aws-ms-lab-service-b-task'
-                        env.CONTAINER_NAME   = 'service-b-container'
-                    } else {
-                        error("Unsupported SERVICE_MODULE: ${params.SERVICE_MODULE}")
-                    }
-
-                    env.IMAGE_URI = "${env.ECR_URI}:${env.IMAGE_TAG}"
-
-                    echo "SERVICE_DIR      = ${env.SERVICE_DIR}"
-                    echo "ECR_URI          = ${env.ECR_URI}"
-                    echo "ECS_SERVICE_NAME = ${env.ECS_SERVICE_NAME}"
-                    echo "TASK_FAMILY      = ${env.TASK_FAMILY}"
-                    echo "CONTAINER_NAME   = ${env.CONTAINER_NAME}"
-                    echo "IMAGE_TAG        = ${env.IMAGE_TAG}"
-                    echo "IMAGE_URI        = ${env.IMAGE_URI}"
-                }
-            }
-        }
-
         stage('Clean Workspace') {
             steps {
                 deleteDir()
@@ -63,6 +36,10 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+                sh '''
+                    set -e
+                    git --no-pager log --oneline -n 3 || true
+                '''
             }
         }
 
@@ -79,79 +56,181 @@ pipeline {
             }
         }
 
-        stage('Build JAR') {
+        stage('Detect Changed Services') {
             steps {
-                dir("${SERVICE_DIR}") {
-                    sh '''
-                        set -e
-                        mvn clean package -DskipTests
-                    '''
+                script {
+                    env.DEPLOY_SERVICE_A = 'false'
+                    env.DEPLOY_SERVICE_B = 'false'
+
+                    if (params.DEPLOY_MODE == 'MANUAL') {
+                        echo "DEPLOY_MODE=MANUAL"
+
+                        if (params.SERVICE_MODULE == 'service-a') {
+                            env.DEPLOY_SERVICE_A = 'true'
+                        } else if (params.SERVICE_MODULE == 'service-b') {
+                            env.DEPLOY_SERVICE_B = 'true'
+                        } else {
+                            error("Unsupported SERVICE_MODULE: ${params.SERVICE_MODULE}")
+                        }
+
+                    } else {
+                        echo "DEPLOY_MODE=AUTO"
+
+                        def changedFiles = sh(
+                            script: '''
+                                set +e
+
+                                if git rev-parse HEAD~1 >/dev/null 2>&1; then
+                                  git diff --name-only HEAD~1 HEAD
+                                else
+                                  git ls-files
+                                fi
+                            ''',
+                            returnStdout: true
+                        ).trim()
+
+                        echo "Changed files:\\n${changedFiles}"
+
+                        def changedList = changedFiles ? changedFiles.split("\\n") : []
+
+                        if (changedList.any { it.startsWith("service-a/") }) {
+                            env.DEPLOY_SERVICE_A = 'true'
+                        }
+
+                        if (changedList.any { it.startsWith("service-b/") }) {
+                            env.DEPLOY_SERVICE_B = 'true'
+                        }
+                    }
+
+                    echo "DEPLOY_SERVICE_A=${env.DEPLOY_SERVICE_A}"
+                    echo "DEPLOY_SERVICE_B=${env.DEPLOY_SERVICE_B}"
+
+                    if (env.DEPLOY_SERVICE_A != 'true' && env.DEPLOY_SERVICE_B != 'true') {
+                        echo "No service changes detected. Deployment will be skipped."
+                    }
                 }
             }
         }
 
-        stage('Build Docker Image') {
-            steps {
-                sh '''
-                    set -e
-                    docker build -t ${IMAGE_URI} ./${SERVICE_DIR}
-                '''
+        stage('Deploy service-a') {
+            when {
+                expression { env.DEPLOY_SERVICE_A == 'true' }
             }
-        }
-
-        stage('Login ECR') {
             steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-ms-lab-credentials'
-                ]]) {
-                    sh '''
-                        set -e
-                        aws ecr get-login-password --region ${AWS_REGION} | \
-                        docker login --username AWS --password-stdin ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com
-                    '''
+                script {
+                    deployService('service-a')
                 }
             }
         }
 
-        stage('Push Image to ECR') {
-            steps {
-                sh '''
-                    set -e
-                    docker push ${IMAGE_URI}
-                '''
+        stage('Deploy service-b') {
+            when {
+                expression { env.DEPLOY_SERVICE_B == 'true' }
             }
-        }
-
-        stage('Export Current Task Definition') {
             steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-ms-lab-credentials'
-                ]]) {
-                    sh '''
-                        set -e
-
-                        aws ecs describe-task-definition \
-                          --task-definition ${TASK_FAMILY} \
-                          --region ${AWS_REGION} \
-                          --query taskDefinition \
-                          --output json \
-                          > current-task-def.json
-
-                        echo "===== CHECK current-task-def.json image ====="
-                        grep -n '"image"' current-task-def.json || true
-                    '''
+                script {
+                    deployService('service-b')
                 }
             }
         }
 
-        stage('Prepare New Task Definition JSON') {
+        stage('No Deployment Needed') {
+            when {
+                expression { env.DEPLOY_SERVICE_A != 'true' && env.DEPLOY_SERVICE_B != 'true' }
+            }
             steps {
-                sh '''
-                    set -e
+                echo '沒有偵測到 service-a / service-b 變更，跳過部署。'
+            }
+        }
+    }
 
-                    cat > prepare_taskdef.py <<'PY'
+    post {
+        always {
+            archiveArtifacts artifacts: '**/current-task-def.json,**/new-task-def.json,**/register-output.json,**/new-taskdef-arn.txt', allowEmptyArchive: true
+        }
+        success {
+            echo "Pipeline 成功。DEPLOY_MODE=${params.DEPLOY_MODE}"
+        }
+        failure {
+            echo 'Pipeline 失敗，請檢查 console 與 artifacts。'
+        }
+    }
+}
+
+/* =========================
+   共用部署函式
+   ========================= */
+def deployService(String serviceModule) {
+    def config = getServiceConfig(serviceModule)
+
+    env.SERVICE_DIR       = config.SERVICE_DIR
+    env.ECR_URI           = config.ECR_URI
+    env.ECS_SERVICE_NAME  = config.ECS_SERVICE_NAME
+    env.TASK_FAMILY       = config.TASK_FAMILY
+    env.CONTAINER_NAME    = config.CONTAINER_NAME
+    env.IMAGE_TAG         = "build-${env.BUILD_NUMBER}"
+    env.IMAGE_URI         = "${env.ECR_URI}:${env.IMAGE_TAG}"
+
+    echo "===== DEPLOY CONFIG (${serviceModule}) ====="
+    echo "SERVICE_DIR      = ${env.SERVICE_DIR}"
+    echo "ECR_URI          = ${env.ECR_URI}"
+    echo "ECS_SERVICE_NAME = ${env.ECS_SERVICE_NAME}"
+    echo "TASK_FAMILY      = ${env.TASK_FAMILY}"
+    echo "CONTAINER_NAME   = ${env.CONTAINER_NAME}"
+    echo "IMAGE_TAG        = ${env.IMAGE_TAG}"
+    echo "IMAGE_URI        = ${env.IMAGE_URI}"
+
+    dir("${env.SERVICE_DIR}") {
+        sh '''
+            set -e
+            mvn clean package -DskipTests
+        '''
+    }
+
+    sh """
+        set -e
+        docker build -t ${env.IMAGE_URI} ./${env.SERVICE_DIR}
+    """
+
+    withCredentials([[
+        $class: 'AmazonWebServicesCredentialsBinding',
+        credentialsId: 'aws-ms-lab-credentials'
+    ]]) {
+        sh """
+            set -e
+            aws ecr get-login-password --region ${env.AWS_REGION} | \
+            docker login --username AWS --password-stdin ${env.AWS_ACCOUNT}.dkr.ecr.${env.AWS_REGION}.amazonaws.com
+        """
+    }
+
+    sh """
+        set -e
+        docker push ${env.IMAGE_URI}
+    """
+
+    dir("${env.SERVICE_DIR}") {
+        withCredentials([[
+            $class: 'AmazonWebServicesCredentialsBinding',
+            credentialsId: 'aws-ms-lab-credentials'
+        ]]) {
+            sh """
+                set -e
+
+                aws ecs describe-task-definition \
+                  --task-definition ${env.TASK_FAMILY} \
+                  --region ${env.AWS_REGION} \
+                  --query taskDefinition \
+                  --output json \
+                  > current-task-def.json
+
+                echo "===== CHECK current-task-def.json image ====="
+                grep -n '"image"' current-task-def.json || true
+            """
+
+            sh '''
+                set -e
+
+                cat > prepare_taskdef.py <<'PY'
 import json
 import os
 import sys
@@ -184,6 +263,16 @@ for c in containers:
         print("DEBUG matched container =", container_name)
         print("DEBUG old image =", c.get("image"))
         c["image"] = image_uri
+
+        if "environment" not in c:
+            c["environment"] = []
+
+        c["environment"] = [e for e in c["environment"] if e.get("name") != "APP_IMAGE_TAG"]
+        c["environment"].append({
+            "name": "APP_IMAGE_TAG",
+            "value": image_uri.split(":")[-1]
+        })
+
         print("DEBUG new image =", c.get("image"))
         matched = True
 
@@ -223,30 +312,26 @@ with open("new-task-def.json", "w", encoding="utf-8") as f:
 print("DEBUG new-task-def.json written successfully")
 PY
 
-                    python3 prepare_taskdef.py
-                    rm -f prepare_taskdef.py
+                python3 prepare_taskdef.py
+                rm -f prepare_taskdef.py
 
-                    echo "===== CHECK new-task-def.json image ====="
-                    grep -n '"image"' new-task-def.json || true
-                '''
-            }
-        }
+                echo "===== CHECK new-task-def.json image ====="
+                grep -n '"image"' new-task-def.json || true
+            '''
 
-        stage('Register New Task Definition Revision') {
-            steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-ms-lab-credentials'
-                ]]) {
-                    sh '''
-                        set -e
+            sh """
+                set -e
 
-                        aws ecs register-task-definition \
-                          --cli-input-json file://new-task-def.json \
-                          --region ${AWS_REGION} \
-                          > register-output.json
+                aws ecs register-task-definition \
+                  --cli-input-json file://new-task-def.json \
+                  --region ${env.AWS_REGION} \
+                  > register-output.json
+            """
 
-                        cat > extract_taskdef_arn.py <<'PY'
+            sh '''
+                set -e
+
+                cat > extract_taskdef_arn.py <<'PY'
 import json
 
 with open("register-output.json", "r", encoding="utf-8") as f:
@@ -260,100 +345,86 @@ with open("new-taskdef-arn.txt", "w", encoding="utf-8") as f:
 print("DEBUG registered taskDefinitionArn =", arn)
 PY
 
-                        python3 extract_taskdef_arn.py
-                        rm -f extract_taskdef_arn.py
+                python3 extract_taskdef_arn.py
+                rm -f extract_taskdef_arn.py
 
-                        echo "===== CHECK register-output image ====="
-                        grep -n '"image"' register-output.json || true
+                echo "===== CHECK register-output image ====="
+                grep -n '"image"' register-output.json || true
 
-                        echo "===== CHECK new-taskdef-arn.txt ====="
-                        cat new-taskdef-arn.txt
-                    '''
-                }
-            }
-        }
+                echo "===== CHECK new-taskdef-arn.txt ====="
+                cat new-taskdef-arn.txt
+            """
 
-        stage('Update ECS Service') {
-            steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-ms-lab-credentials'
-                ]]) {
-                    sh '''
-                        set -e
+            sh """
+                set -e
 
-                        echo "===== USING TASK DEF ARN ====="
-                        cat new-taskdef-arn.txt
+                echo "===== USING TASK DEF ARN ====="
+                cat new-taskdef-arn.txt
 
-                        aws ecs update-service \
-                          --cluster ${CLUSTER_NAME} \
-                          --service ${ECS_SERVICE_NAME} \
-                          --task-definition "$(cat new-taskdef-arn.txt)" \
-                          --force-new-deployment \
-                          --region ${AWS_REGION}
-                    '''
-                }
-            }
-        }
+                aws ecs update-service \
+                  --cluster ${env.CLUSTER_NAME} \
+                  --service ${env.ECS_SERVICE_NAME} \
+                  --task-definition "\$(cat new-taskdef-arn.txt)" \
+                  --force-new-deployment \
+                  --region ${env.AWS_REGION}
+            """
 
-        stage('Wait for Rollout') {
-            steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-ms-lab-credentials'
-                ]]) {
-                    sh '''
-                        set -e
+            sh """
+                set -e
 
-                        aws ecs wait services-stable \
-                          --cluster ${CLUSTER_NAME} \
-                          --services ${ECS_SERVICE_NAME} \
-                          --region ${AWS_REGION}
+                aws ecs wait services-stable \
+                  --cluster ${env.CLUSTER_NAME} \
+                  --services ${env.ECS_SERVICE_NAME} \
+                  --region ${env.AWS_REGION}
 
-                        echo "ECS service is stable now."
-                    '''
-                }
-            }
-        }
+                echo "ECS service is stable now."
+            """
 
-        stage('Deployment Summary') {
-            steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-ms-lab-credentials'
-                ]]) {
-                    sh '''
-                        set -e
+            sh """
+                set -e
 
-                        echo "Deployment completed."
-                        echo "SERVICE_MODULE=${SERVICE_DIR}"
-                        echo "IMAGE_URI=${IMAGE_URI}"
-                        echo "CLUSTER_NAME=${CLUSTER_NAME}"
-                        echo "ECS_SERVICE_NAME=${ECS_SERVICE_NAME}"
-                        echo "TASK_FAMILY=${TASK_FAMILY}"
+                echo "Deployment completed."
+                echo "SERVICE_MODULE=${serviceModule}"
+                echo "IMAGE_URI=${env.IMAGE_URI}"
+                echo "CLUSTER_NAME=${env.CLUSTER_NAME}"
+                echo "ECS_SERVICE_NAME=${env.ECS_SERVICE_NAME}"
+                echo "TASK_FAMILY=${env.TASK_FAMILY}"
 
-                        echo "===== SERVICE SUMMARY ====="
-                        aws ecs describe-services \
-                          --cluster ${CLUSTER_NAME} \
-                          --services ${ECS_SERVICE_NAME} \
-                          --region ${AWS_REGION} \
-                          --query 'services[0].{serviceName:serviceName,status:status,taskDefinition:taskDefinition,desiredCount:desiredCount,runningCount:runningCount}' \
-                          --output table || true
-                    '''
-                }
-            }
+                echo "===== SERVICE SUMMARY ====="
+                aws ecs describe-services \
+                  --cluster ${env.CLUSTER_NAME} \
+                  --services ${env.ECS_SERVICE_NAME} \
+                  --region ${env.AWS_REGION} \
+                  --query 'services[0].{serviceName:serviceName,status:status,taskDefinition:taskDefinition,desiredCount:desiredCount,runningCount:runningCount}' \
+                  --output table || true
+            """
         }
     }
+}
 
-    post {
-        always {
-            archiveArtifacts artifacts: 'current-task-def.json,new-task-def.json,register-output.json,new-taskdef-arn.txt', allowEmptyArchive: true
-        }
-        success {
-            echo "Pipeline 成功：${params.SERVICE_MODULE} 已成功部署到 AWS ECS。"
-        }
-        failure {
-            echo "Pipeline 失敗：請檢查 console 與 artifacts。"
-        }
+/* =========================
+   服務對應設定
+   ========================= */
+def getServiceConfig(String serviceModule) {
+    if (serviceModule == 'service-a') {
+        return [
+            SERVICE_DIR      : 'service-a',
+            ECR_URI          : '854139532460.dkr.ecr.ap-northeast-1.amazonaws.com/aws-ms-lab/service-a',
+            ECS_SERVICE_NAME : 'aws-ms-lab-service-a-task-service-priw3f2z',
+            TASK_FAMILY      : 'aws-ms-lab-service-a-task',
+            CONTAINER_NAME   : 'service-a-container'
+        ]
     }
+
+    if (serviceModule == 'service-b') {
+        return [
+            SERVICE_DIR      : 'service-b',
+            ECR_URI          : '854139532460.dkr.ecr.ap-northeast-1.amazonaws.com/aws-ms-lab/service-b',
+            ECS_SERVICE_NAME : 'aws-ms-lab-service-b-task-service',
+            TASK_FAMILY      : 'aws-ms-lab-service-b-task',
+            CONTAINER_NAME   : 'service-b-container'
+        ]
+    }
+
+    error("Unsupported serviceModule: ${serviceModule}")
 }

@@ -8,6 +8,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -32,7 +33,7 @@ public class HelloController {
     @GetMapping("/api/b/hello")
     public Map<String, Object> hello() {
         String traceId = MDC.get("traceId");
-        log.info("Handling /api/b/hello, traceId={}", traceId);
+        log.info("Handling /api/b/hello srvice-b , traceId={}", traceId);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("service", "service-b");
@@ -40,6 +41,7 @@ public class HelloController {
         result.put("environment", environment);
         result.put("branch", branch);
         result.put("imageTag", imageTag);
+        result.put(" sys time", new Date());
         result.put("traceId", traceId);
         return result;
     }
