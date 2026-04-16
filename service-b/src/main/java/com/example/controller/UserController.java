@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.example.repository.UserRepository;
 
+
 @RestController
 @RequestMapping("/api/b")
 public class UserController {

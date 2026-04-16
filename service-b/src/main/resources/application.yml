@@ -38,3 +38,5 @@ management:
 logging:
   level:
     root: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%X{traceId}] %-5level %logger - %msg%n"

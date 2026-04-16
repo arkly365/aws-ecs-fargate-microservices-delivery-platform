@@ -25,6 +25,7 @@ app:
   environment: ${APP_ENV:local}
   branch: ${APP_BRANCH:unknown}
   imageTag: ${APP_IMAGE_TAG:unknown}
+  serviceBBaseUrl: ${APP_SERVICE_B_BASE_URL:http://lab-alb-591993737.ap-northeast-1.elb.amazonaws.com}
 
 management:
   endpoints:
@@ -38,3 +39,5 @@ management:
 logging:
   level:
     root: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%X{traceId}] %-5level %logger - %msg%n"

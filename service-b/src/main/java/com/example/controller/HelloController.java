@@ -1,5 +1,8 @@
 package com.example.controller;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -11,6 +14,8 @@ import java.util.Map;
 
 @RestController
 public class HelloController {
+
+    private static final Logger log = LoggerFactory.getLogger(HelloController.class);
 
     @Value("${spring.application.name:unknown}")
     private String applicationName;
@@ -26,17 +31,23 @@ public class HelloController {
 
     @GetMapping("/api/b/hello")
     public Map<String, Object> hello() {
+        String traceId = MDC.get("traceId");
+        log.info("Handling /api/b/hello, traceId={}", traceId);
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("service", "service-b");
         result.put("message", "Hello from service-b");
         result.put("environment", environment);
         result.put("branch", branch);
         result.put("imageTag", imageTag);
+        result.put("traceId", traceId);
         return result;
     }
 
     @GetMapping("/api/b/version")
     public Map<String, Object> version() {
+        log.info("Handling /api/b/version");
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("service", "service-b");
         result.put("applicationName", applicationName);
@@ -45,9 +56,11 @@ public class HelloController {
         result.put("imageTag", imageTag);
         return result;
     }
-    
-    @GetMapping("/api/a/busy")
+
+    @GetMapping("/api/b/busy")
     public Map<String, Object> busy() {
+        log.info("Handling /api/b/busy");
+
         long end = System.currentTimeMillis() + 5000;
         long x = 0;
         while (System.currentTimeMillis() < end) {
@@ -55,7 +68,7 @@ public class HelloController {
         }
 
         Map<String, Object> result = new HashMap<>();
-        result.put("service", "service-a");
+        result.put("service", "service-b");
         result.put("message", "busy done");
         result.put("value", x);
         return result;
