@@ -5,6 +5,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -42,6 +43,21 @@ public class HelloController {
         result.put("environment", environment);
         result.put("branch", branch);
         result.put("imageTag", imageTag);
+        return result;
+    }
+    
+    @GetMapping("/api/a/busy")
+    public Map<String, Object> busy() {
+        long end = System.currentTimeMillis() + 5000;
+        long x = 0;
+        while (System.currentTimeMillis() < end) {
+            x += System.nanoTime() % 100;
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("service", "service-a");
+        result.put("message", "busy done");
+        result.put("value", x);
         return result;
     }
 
