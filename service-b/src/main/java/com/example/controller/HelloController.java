@@ -40,6 +40,7 @@ public class HelloController {
         result.put("message", "Hello from service-b");
         result.put("environment", environment);
         result.put("branch", branch);
+        result.put("name", "小華");
         result.put("imageTag", imageTag);
         result.put(" sys time", new Date());
         result.put("traceId", traceId);
