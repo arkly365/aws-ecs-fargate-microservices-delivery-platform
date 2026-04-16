@@ -6,19 +6,54 @@ pipeline {
         timestamps()
     }
 
-    environment {
-        AWS_REGION     = 'ap-northeast-1'
-        ECR_URI        = '854139532460.dkr.ecr.ap-northeast-1.amazonaws.com/aws-ms-lab/service-a'
-        CLUSTER_NAME   = 'aws-ms-lab-cluster'
-        SERVICE_NAME   = 'aws-ms-lab-service-a-task-service-priw3f2z'
-        TASK_FAMILY    = 'aws-ms-lab-service-a-task'
-        CONTAINER_NAME = 'service-a-container'
+    parameters {
+        choice(
+            name: 'SERVICE_MODULE',
+            choices: ['service-a', 'service-b'],
+            description: '選擇要部署的微服務'
+        )
+    }
 
-        IMAGE_TAG      = "build-${BUILD_NUMBER}"
-        IMAGE_URI      = "${ECR_URI}:build-${BUILD_NUMBER}"
+    environment {
+        AWS_REGION   = 'ap-northeast-1'
+        AWS_ACCOUNT  = '854139532460'
+        CLUSTER_NAME = 'aws-ms-lab-cluster'
     }
 
     stages {
+        stage('Init Variables') {
+            steps {
+                script {
+                    env.SERVICE_DIR = params.SERVICE_MODULE
+                    env.IMAGE_TAG   = "build-${BUILD_NUMBER}"
+
+                    if (params.SERVICE_MODULE == 'service-a') {
+                        env.ECR_URI          = "${env.AWS_ACCOUNT}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/aws-ms-lab/service-a"
+                        env.ECS_SERVICE_NAME = 'aws-ms-lab-service-a-task-service-priw3f2z'
+                        env.TASK_FAMILY      = 'aws-ms-lab-service-a-task'
+                        env.CONTAINER_NAME   = 'service-a-container'
+                    } else if (params.SERVICE_MODULE == 'service-b') {
+                        env.ECR_URI          = "${env.AWS_ACCOUNT}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/aws-ms-lab/service-b"
+                        env.ECS_SERVICE_NAME = 'aws-ms-lab-service-b-task-service'   // ← 這裡改成你真正的 service-b ECS Service 名稱
+                        env.TASK_FAMILY      = 'aws-ms-lab-service-b-task'
+                        env.CONTAINER_NAME   = 'service-b-container'
+                    } else {
+                        error("Unsupported SERVICE_MODULE: ${params.SERVICE_MODULE}")
+                    }
+
+                    env.IMAGE_URI = "${env.ECR_URI}:${env.IMAGE_TAG}"
+
+                    echo "SERVICE_DIR      = ${env.SERVICE_DIR}"
+                    echo "ECR_URI          = ${env.ECR_URI}"
+                    echo "ECS_SERVICE_NAME = ${env.ECS_SERVICE_NAME}"
+                    echo "TASK_FAMILY      = ${env.TASK_FAMILY}"
+                    echo "CONTAINER_NAME   = ${env.CONTAINER_NAME}"
+                    echo "IMAGE_TAG        = ${env.IMAGE_TAG}"
+                    echo "IMAGE_URI        = ${env.IMAGE_URI}"
+                }
+            }
+        }
+
         stage('Clean Workspace') {
             steps {
                 deleteDir()
@@ -46,7 +81,7 @@ pipeline {
 
         stage('Build JAR') {
             steps {
-                dir('service-a') {
+                dir("${SERVICE_DIR}") {
                     sh '''
                         set -e
                         mvn clean package -DskipTests
@@ -59,7 +94,7 @@ pipeline {
             steps {
                 sh '''
                     set -e
-                    docker build -t ${IMAGE_URI} ./service-a
+                    docker build -t ${IMAGE_URI} ./${SERVICE_DIR}
                 '''
             }
         }
@@ -73,7 +108,7 @@ pipeline {
                     sh '''
                         set -e
                         aws ecr get-login-password --region ${AWS_REGION} | \
-                        docker login --username AWS --password-stdin 854139532460.dkr.ecr.ap-northeast-1.amazonaws.com
+                        docker login --username AWS --password-stdin ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com
                     '''
                 }
             }
@@ -252,7 +287,7 @@ PY
 
                         aws ecs update-service \
                           --cluster ${CLUSTER_NAME} \
-                          --service ${SERVICE_NAME} \
+                          --service ${ECS_SERVICE_NAME} \
                           --task-definition "$(cat new-taskdef-arn.txt)" \
                           --force-new-deployment \
                           --region ${AWS_REGION}
@@ -272,7 +307,7 @@ PY
 
                         aws ecs wait services-stable \
                           --cluster ${CLUSTER_NAME} \
-                          --services ${SERVICE_NAME} \
+                          --services ${ECS_SERVICE_NAME} \
                           --region ${AWS_REGION}
 
                         echo "ECS service is stable now."
@@ -291,15 +326,16 @@ PY
                         set -e
 
                         echo "Deployment completed."
+                        echo "SERVICE_MODULE=${SERVICE_DIR}"
                         echo "IMAGE_URI=${IMAGE_URI}"
                         echo "CLUSTER_NAME=${CLUSTER_NAME}"
-                        echo "SERVICE_NAME=${SERVICE_NAME}"
+                        echo "ECS_SERVICE_NAME=${ECS_SERVICE_NAME}"
                         echo "TASK_FAMILY=${TASK_FAMILY}"
 
                         echo "===== SERVICE SUMMARY ====="
                         aws ecs describe-services \
                           --cluster ${CLUSTER_NAME} \
-                          --services ${SERVICE_NAME} \
+                          --services ${ECS_SERVICE_NAME} \
                           --region ${AWS_REGION} \
                           --query 'services[0].{serviceName:serviceName,status:status,taskDefinition:taskDefinition,desiredCount:desiredCount,runningCount:runningCount}' \
                           --output table || true
@@ -314,10 +350,10 @@ PY
             archiveArtifacts artifacts: 'current-task-def.json,new-task-def.json,register-output.json,new-taskdef-arn.txt', allowEmptyArchive: true
         }
         success {
-            echo 'service-a 已成功部署到 AWS ECS。'
+            echo "Pipeline 成功：${params.SERVICE_MODULE} 已成功部署到 AWS ECS。"
         }
         failure {
-            echo 'Pipeline 失敗，請檢查 console 與 artifacts。'
+            echo "Pipeline 失敗：請檢查 console 與 artifacts。"
         }
     }
 }
