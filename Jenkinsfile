@@ -6,19 +6,19 @@ pipeline {
         timestamps()
     }
 
-    parameters {
-        choice(
-            name: 'DEPLOY_MODE',
-            choices: ['MANUAL', 'AUTO'],
-            description: 'MANUAL=手動指定服務；AUTO=根據本次 commit 自動判斷'
-        )
+	parameters {
+		choice(
+			name: 'DEPLOY_MODE',
+			choices: ['AUTO', 'MANUAL'],
+			description: 'AUTO=根據本次 commit 自動判斷；MANUAL=手動指定服務'
+		)
 
-        choice(
-            name: 'SERVICE_MODULE',
-            choices: ['service-a', 'service-b'],
-            description: 'MANUAL 模式時，要部署的微服務'
-        )
-    }
+		choice(
+			name: 'SERVICE_MODULE',
+			choices: ['service-a', 'service-b'],
+			description: 'MANUAL 模式時，要部署的微服務'
+		)
+	}
 
     environment {
         AWS_REGION   = 'ap-northeast-1'
@@ -56,61 +56,64 @@ pipeline {
             }
         }
 
-        stage('Detect Changed Services') {
-            steps {
-                script {
-                    env.DEPLOY_SERVICE_A = 'false'
-                    env.DEPLOY_SERVICE_B = 'false'
+		stage('Detect Changed Services') {
+			steps {
+				script {
+					env.DEPLOY_SERVICE_A = 'false'
+					env.DEPLOY_SERVICE_B = 'false'
 
-                    if (params.DEPLOY_MODE == 'MANUAL') {
-                        echo "DEPLOY_MODE=MANUAL"
+					def causes = currentBuild.rawBuild.getCauses()
+					echo "Build causes: ${causes}"
 
-                        if (params.SERVICE_MODULE == 'service-a') {
-                            env.DEPLOY_SERVICE_A = 'true'
-                        } else if (params.SERVICE_MODULE == 'service-b') {
-                            env.DEPLOY_SERVICE_B = 'true'
-                        } else {
-                            error("Unsupported SERVICE_MODULE: ${params.SERVICE_MODULE}")
-                        }
+					if (params.DEPLOY_MODE == 'MANUAL') {
+						echo "DEPLOY_MODE=MANUAL"
 
-                    } else {
-                        echo "DEPLOY_MODE=AUTO"
+						if (params.SERVICE_MODULE == 'service-a') {
+							env.DEPLOY_SERVICE_A = 'true'
+						} else if (params.SERVICE_MODULE == 'service-b') {
+							env.DEPLOY_SERVICE_B = 'true'
+						} else {
+							error("Unsupported SERVICE_MODULE: ${params.SERVICE_MODULE}")
+						}
 
-                        def changedFiles = sh(
-                            script: '''
-                                set +e
+					} else {
+						echo "DEPLOY_MODE=AUTO"
 
-                                if git rev-parse HEAD~1 >/dev/null 2>&1; then
-                                  git diff --name-only HEAD~1 HEAD
-                                else
-                                  git ls-files
-                                fi
-                            ''',
-                            returnStdout: true
-                        ).trim()
+						def changedFiles = sh(
+							script: '''
+								set +e
 
-                        echo "Changed files:\n${changedFiles}"
+								if git rev-parse HEAD~1 >/dev/null 2>&1; then
+								  git diff --name-only HEAD~1 HEAD
+								else
+								  git ls-files
+								fi
+							''',
+							returnStdout: true
+						).trim()
 
-                        def changedList = changedFiles ? changedFiles.split("\\n") : []
+						echo "Changed files:\n${changedFiles}"
 
-                        if (changedList.any { it.startsWith('service-a/') }) {
-                            env.DEPLOY_SERVICE_A = 'true'
-                        }
+						def changedList = changedFiles ? changedFiles.split("\\n") : []
 
-                        if (changedList.any { it.startsWith('service-b/') }) {
-                            env.DEPLOY_SERVICE_B = 'true'
-                        }
-                    }
+						if (changedList.any { it.startsWith('service-a/') }) {
+							env.DEPLOY_SERVICE_A = 'true'
+						}
 
-                    echo "DEPLOY_SERVICE_A=${env.DEPLOY_SERVICE_A}"
-                    echo "DEPLOY_SERVICE_B=${env.DEPLOY_SERVICE_B}"
+						if (changedList.any { it.startsWith('service-b/') }) {
+							env.DEPLOY_SERVICE_B = 'true'
+						}
+					}
 
-                    if (env.DEPLOY_SERVICE_A != 'true' && env.DEPLOY_SERVICE_B != 'true') {
-                        echo 'No service changes detected. Deployment will be skipped.'
-                    }
-                }
-            }
-        }
+					echo "DEPLOY_SERVICE_A=${env.DEPLOY_SERVICE_A}"
+					echo "DEPLOY_SERVICE_B=${env.DEPLOY_SERVICE_B}"
+
+					if (env.DEPLOY_SERVICE_A != 'true' && env.DEPLOY_SERVICE_B != 'true') {
+						echo 'No service changes detected. Deployment will be skipped.'
+					}
+				}
+			}
+		}
 
         stage('Deploy service-a') {
             when {
