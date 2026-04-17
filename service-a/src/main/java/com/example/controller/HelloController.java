@@ -45,7 +45,7 @@ public class HelloController {
         result.put("message", "Hello from service-a");
         result.put("environment", environment);
         result.put("branch", branch);
-        result.put("name", "小明6");
+        result.put("name", "小明7");
         result.put("imageTag", imageTag);
         return result;
     }

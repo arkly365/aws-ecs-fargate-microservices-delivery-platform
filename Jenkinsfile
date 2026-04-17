@@ -202,7 +202,7 @@ for c in data["containerDefinitions"]:
             "SPRING_DATASOURCE_DRIVER_CLASS_NAME": "com.mysql.cj.jdbc.Driver"
         }
 
-        # 清掉舊的同名 environment，並且移除舊的明碼 password
+        # 清掉舊的 environment 值，並移除舊的明碼 password
         c["environment"] = [
             e for e in c["environment"]
             if e.get("name") not in keys_to_replace
@@ -215,15 +215,16 @@ for c in data["containerDefinitions"]:
                 "value": v
             })
 
-        # 清掉舊的同名 secret，避免重複
+        # 清掉舊的 secret，避免重複
         c["secrets"] = [
             s for s in c["secrets"]
             if s.get("name") != "SPRING_DATASOURCE_PASSWORD"
         ]
 
+        # Secrets Manager 是 JSON secret，所以指定取 password key
         c["secrets"].append({
             "name": "SPRING_DATASOURCE_PASSWORD",
-            "valueFrom": secret_arn
+            "valueFrom": secret_arn + ":password::"
         })
 
 output = {
