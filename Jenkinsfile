@@ -184,9 +184,9 @@ for c in data["containerDefinitions"]:
         }
 
         if container_name == "service-a-container":
-            keys_to_replace["SPRING_DATASOURCE_URL"] = "jdbc:mysql://appdb.c3ai6e6kuro7.ap-northeast-1.rds.amazonaws.com:3306/appdb?useSSL=false&serverTimezone=Asia/Taipei&characterEncoding=utf8"
+            keys_to_replace["SPRING_DATASOURCE_URL"] = "jdbc:mysql://appdb.c3ai6e6kuro7.ap-northeast-1.rds.amazonaws.com:3306/appdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Taipei&characterEncoding=UTF-8"
             keys_to_replace["SPRING_DATASOURCE_USERNAME"] = "admin"
-            keys_to_replace["SPRING_DATASOURCE_PASSWORD"] = "請改成你的RDS密碼"
+            keys_to_replace["SPRING_DATASOURCE_PASSWORD"] = "Admin1234!"
             keys_to_replace["SPRING_DATASOURCE_DRIVER_CLASS_NAME"] = "com.mysql.cj.jdbc.Driver"
 
         c["environment"] = [
@@ -202,14 +202,18 @@ for c in data["containerDefinitions"]:
 
 output = {
     "family": data["family"],
-    "taskRoleArn": data.get("taskRoleArn"),
-    "executionRoleArn": data.get("executionRoleArn"),
     "networkMode": data["networkMode"],
     "containerDefinitions": data["containerDefinitions"],
     "requiresCompatibilities": data["requiresCompatibilities"],
     "cpu": data["cpu"],
     "memory": data["memory"]
 }
+
+if data.get("taskRoleArn"):
+    output["taskRoleArn"] = data["taskRoleArn"]
+
+if data.get("executionRoleArn"):
+    output["executionRoleArn"] = data["executionRoleArn"]
 
 if data.get("volumes"):
     output["volumes"] = data["volumes"]
