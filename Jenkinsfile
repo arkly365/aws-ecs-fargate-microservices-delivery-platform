@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     parameters {
-        choice(name: 'DEPLOY_MODE', choices: ['MANUAL', 'AUTO'], description: 'Deploy mode')
+        choice(name: 'DEPLOY_MODE', choices: ['AUTO', 'MANUAL'], description: 'Deploy mode')
         booleanParam(name: 'DEPLOY_SERVICE_A', defaultValue: true, description: 'Deploy service-a')
         booleanParam(name: 'DEPLOY_SERVICE_B', defaultValue: true, description: 'Deploy service-b')
     }
@@ -16,9 +16,16 @@ pipeline {
 
     stages {
 
+        stage('Checkout SCM') {
+            steps {
+                checkout scm
+            }
+        }
+
         stage('Clean Workspace') {
             steps {
                 cleanWs()
+                checkout scm
             }
         }
 
@@ -31,7 +38,7 @@ pipeline {
         stage('Detect Changed Services') {
             steps {
                 script {
-                    def changedFiles = sh(
+                    def changedFilesRaw = sh(
                         script: '''
                         set +e
                         if git rev-parse HEAD~1 >/dev/null 2>&1; then
@@ -41,9 +48,11 @@ pipeline {
                         fi
                         ''',
                         returnStdout: true
-                    ).trim().split("\n")
+                    ).trim()
 
-                    echo "Changed files: ${changedFiles}"
+                    def changedFiles = changedFilesRaw ? changedFilesRaw.split("\n") : []
+
+                    echo "Changed files:\n${changedFilesRaw}"
 
                     if (params.DEPLOY_MODE == 'AUTO') {
                         env.DEPLOY_SERVICE_A = changedFiles.any { it.startsWith('service-a/') } ? "true" : "false"
@@ -94,7 +103,7 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: '**/*', fingerprint: true
+            archiveArtifacts artifacts: '**/current-task-def.json,**/new-task-def.json,**/register-output.json,**/new-taskdef-arn.txt,**/prepare_taskdef.py', allowEmptyArchive: true
         }
     }
 }
@@ -104,7 +113,15 @@ def deployService(serviceName) {
     def imageTag = "build-${env.BUILD_NUMBER}"
     def imageUri = "${env.ECR_BASE}/${serviceName}:${imageTag}"
     def taskFamily = "aws-ms-lab-${serviceName}-task"
-    def serviceNameFull = "aws-ms-lab-${serviceName}-task-service"
+
+    def serviceNameFull
+    if (serviceName == "service-a") {
+        serviceNameFull = "aws-ms-lab-service-a-task-service-priw3f2z"
+    } else if (serviceName == "service-b") {
+        serviceNameFull = "aws-ms-lab-service-b-task-service"
+    } else {
+        error("Unsupported serviceName: ${serviceName}")
+    }
 
     echo "===== DEPLOY ${serviceName} ====="
     echo "IMAGE_URI=${imageUri}"
@@ -112,27 +129,40 @@ def deployService(serviceName) {
     dir(serviceName) {
 
         sh """
+        set -e
         mvn clean package -DskipTests
         """
 
         sh """
+        set -e
         docker build -t ${imageUri} .
         """
 
-        sh """
-        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
-        docker push ${imageUri}
-        """
+        withCredentials([[
+            $class: 'AmazonWebServicesCredentialsBinding',
+            credentialsId: 'aws-ms-lab-credentials'
+        ]]) {
+            sh """
+            set -e
+            aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+            docker push ${imageUri}
+            """
+        }
 
-        sh """
-        aws ecs describe-task-definition \
-          --task-definition ${taskFamily} \
-          --region ${AWS_REGION} \
-          --query taskDefinition \
-          --output json > current-task-def.json
-        """
+        withCredentials([[
+            $class: 'AmazonWebServicesCredentialsBinding',
+            credentialsId: 'aws-ms-lab-credentials'
+        ]]) {
+            sh """
+            set -e
+            aws ecs describe-task-definition \
+              --task-definition ${taskFamily} \
+              --region ${AWS_REGION} \
+              --query taskDefinition \
+              --output json > current-task-def.json
+            """
+        }
 
-        // ✅ 產生乾淨 Python（無 tab 問題）
         writeFile file: 'prepare_taskdef.py', text: """
 import json
 
@@ -144,7 +174,6 @@ image_uri = "${imageUri}"
 
 for c in data["containerDefinitions"]:
     if c["name"] == container_name:
-
         c["image"] = image_uri
 
         if "environment" not in c:
@@ -157,7 +186,7 @@ for c in data["containerDefinitions"]:
         if container_name == "service-a-container":
             keys_to_replace["SPRING_DATASOURCE_URL"] = "jdbc:mysql://appdb.c3ai6e6kuro7.ap-northeast-1.rds.amazonaws.com:3306/appdb?useSSL=false&serverTimezone=Asia/Taipei&characterEncoding=utf8"
             keys_to_replace["SPRING_DATASOURCE_USERNAME"] = "admin"
-            keys_to_replace["SPRING_DATASOURCE_PASSWORD"] = "Admin1234!"
+            keys_to_replace["SPRING_DATASOURCE_PASSWORD"] = "請改成你的RDS密碼"
             keys_to_replace["SPRING_DATASOURCE_DRIVER_CLASS_NAME"] = "com.mysql.cj.jdbc.Driver"
 
         c["environment"] = [
@@ -171,24 +200,87 @@ for c in data["containerDefinitions"]:
                 "value": v
             })
 
+output = {
+    "family": data["family"],
+    "taskRoleArn": data.get("taskRoleArn"),
+    "executionRoleArn": data.get("executionRoleArn"),
+    "networkMode": data["networkMode"],
+    "containerDefinitions": data["containerDefinitions"],
+    "requiresCompatibilities": data["requiresCompatibilities"],
+    "cpu": data["cpu"],
+    "memory": data["memory"]
+}
+
+if data.get("volumes"):
+    output["volumes"] = data["volumes"]
+
+if data.get("placementConstraints"):
+    output["placementConstraints"] = data["placementConstraints"]
+
+if data.get("runtimePlatform"):
+    output["runtimePlatform"] = data["runtimePlatform"]
+
 with open("new-task-def.json", "w") as f:
-    json.dump(data, f)
+    json.dump(output, f)
 """
 
-        sh "python3 prepare_taskdef.py"
-
         sh """
-        aws ecs register-task-definition \
-          --region ${AWS_REGION} \
-          --cli-input-json file://new-task-def.json
+        set -e
+        python3 prepare_taskdef.py
         """
 
-        sh """
-        aws ecs update-service \
-          --cluster ${CLUSTER_NAME} \
-          --service ${serviceNameFull} \
-          --force-new-deployment \
-          --region ${AWS_REGION}
-        """
+        withCredentials([[
+            $class: 'AmazonWebServicesCredentialsBinding',
+            credentialsId: 'aws-ms-lab-credentials'
+        ]]) {
+            sh """
+            set -e
+            aws ecs register-task-definition \
+              --region ${AWS_REGION} \
+              --cli-input-json file://new-task-def.json \
+              > register-output.json
+            """
+        }
+
+        sh '''
+        set -e
+        python3 - <<'PY'
+import json
+with open("register-output.json") as f:
+    data = json.load(f)
+arn = data["taskDefinition"]["taskDefinitionArn"]
+with open("new-taskdef-arn.txt", "w") as f:
+    f.write(arn)
+print(arn)
+PY
+        '''
+
+        withCredentials([[
+            $class: 'AmazonWebServicesCredentialsBinding',
+            credentialsId: 'aws-ms-lab-credentials'
+        ]]) {
+            sh """
+            set -e
+            aws ecs update-service \
+              --cluster ${CLUSTER_NAME} \
+              --service ${serviceNameFull} \
+              --task-definition \$(cat new-taskdef-arn.txt) \
+              --force-new-deployment \
+              --region ${AWS_REGION}
+            """
+        }
+
+        withCredentials([[
+            $class: 'AmazonWebServicesCredentialsBinding',
+            credentialsId: 'aws-ms-lab-credentials'
+        ]]) {
+            sh """
+            set -e
+            aws ecs wait services-stable \
+              --cluster ${CLUSTER_NAME} \
+              --services ${serviceNameFull} \
+              --region ${AWS_REGION}
+            """
+        }
     }
 }
