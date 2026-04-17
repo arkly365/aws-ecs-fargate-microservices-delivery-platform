@@ -13,6 +13,9 @@ pipeline {
         ECR_BASE       = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/aws-ms-lab"
         CLUSTER_NAME   = 'aws-ms-lab-cluster'
         RDS_ENDPOINT   = 'appdb.c3ai6e6kuro7.ap-northeast-1.rds.amazonaws.com'
+
+        SERVICE_A_SECRET_ARN = 'arn:aws:secretsmanager:ap-northeast-1:854139532460:secret:aws-ms-lab/service-a/rds-password-spwtsZ'
+        SERVICE_B_SECRET_ARN = 'arn:aws:secretsmanager:ap-northeast-1:854139532460:secret:aws-ms-lab/service-b/rds-password-aYrDfk'
     }
 
     stages {
@@ -76,7 +79,13 @@ pipeline {
             }
             steps {
                 script {
-                    deployService("service-a")
+                    deployService(
+                        "service-a",
+                        "aws-ms-lab-service-a-task",
+                        "aws-ms-lab-service-a-task-service-priw3f2z",
+                        "service_db",
+                        env.SERVICE_A_SECRET_ARN
+                    )
                 }
             }
         }
@@ -87,7 +96,13 @@ pipeline {
             }
             steps {
                 script {
-                    deployService("service-b")
+                    deployService(
+                        "service-b",
+                        "aws-ms-lab-service-b-task",
+                        "aws-ms-lab-service-b-task-service",
+                        "service_b_db",
+                        env.SERVICE_B_SECRET_ARN
+                    )
                 }
             }
         }
@@ -104,38 +119,22 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: '**/current-task-def.json,**/new-task-def.json,**/register-output.json,**/new-taskdef-arn.txt,**/prepare_taskdef.py', allowEmptyArchive: true
+            archiveArtifacts artifacts: '**/current-task-def.json,**/register-output.json,**/new-taskdef-arn.txt', allowEmptyArchive: true
         }
     }
 }
 
-def deployService(serviceName) {
+def deployService(String serviceName, String taskFamily, String ecsServiceName, String dbName, String secretArn) {
 
     def imageTag = "build-${env.BUILD_NUMBER}"
     def imageUri = "${env.ECR_BASE}/${serviceName}:${imageTag}"
-    def taskFamily = "aws-ms-lab-${serviceName}-task"
-
-    def ecsServiceName = ''
-    def dbName = ''
-    def dbPasswordCredentialId = ''
-
-    if (serviceName == "service-a") {
-        ecsServiceName = "aws-ms-lab-service-a-task-service-priw3f2z"
-        dbName = "service_db"
-        dbPasswordCredentialId = "rds-service-a-password"
-    } else if (serviceName == "service-b") {
-        ecsServiceName = "aws-ms-lab-service-b-task-service"
-        dbName = "service_b_db"
-        dbPasswordCredentialId = "rds-service-b-password"
-    } else {
-        error("Unsupported serviceName: ${serviceName}")
-    }
 
     echo "===== DEPLOY ${serviceName} ====="
     echo "IMAGE_URI=${imageUri}"
     echo "TASK_FAMILY=${taskFamily}"
     echo "ECS_SERVICE_NAME=${ecsServiceName}"
     echo "DB_NAME=${dbName}"
+    echo "SECRET_ARN=${secretArn}"
 
     dir(serviceName) {
 
@@ -174,10 +173,8 @@ def deployService(serviceName) {
             """
         }
 
-        withCredentials([string(credentialsId: dbPasswordCredentialId, variable: 'DB_PASSWORD')]) {
-            writeFile file: 'prepare_taskdef.py', text: """
+        writeFile file: 'prepare_taskdef.py', text: """
 import json
-import os
 
 with open("current-task-def.json") as f:
     data = json.load(f)
@@ -186,7 +183,7 @@ container_name = "${serviceName}-container"
 image_uri = "${imageUri}"
 rds_endpoint = "${env.RDS_ENDPOINT}"
 db_name = "${dbName}"
-db_password = os.environ["DB_PASSWORD"]
+secret_arn = "${secretArn}"
 
 for c in data["containerDefinitions"]:
     if c["name"] == container_name:
@@ -195,17 +192,21 @@ for c in data["containerDefinitions"]:
         if "environment" not in c:
             c["environment"] = []
 
+        if "secrets" not in c:
+            c["secrets"] = []
+
         keys_to_replace = {
             "APP_IMAGE_TAG": image_uri.split(":")[-1],
             "SPRING_DATASOURCE_URL": f"jdbc:mysql://{rds_endpoint}:3306/{db_name}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Taipei&characterEncoding=UTF-8",
             "SPRING_DATASOURCE_USERNAME": "admin",
-            "SPRING_DATASOURCE_PASSWORD": db_password,
             "SPRING_DATASOURCE_DRIVER_CLASS_NAME": "com.mysql.cj.jdbc.Driver"
         }
 
+        # 清掉舊的同名 environment，並且移除舊的明碼 password
         c["environment"] = [
             e for e in c["environment"]
             if e.get("name") not in keys_to_replace
+            and e.get("name") != "SPRING_DATASOURCE_PASSWORD"
         ]
 
         for k, v in keys_to_replace.items():
@@ -213,6 +214,17 @@ for c in data["containerDefinitions"]:
                 "name": k,
                 "value": v
             })
+
+        # 清掉舊的同名 secret，避免重複
+        c["secrets"] = [
+            s for s in c["secrets"]
+            if s.get("name") != "SPRING_DATASOURCE_PASSWORD"
+        ]
+
+        c["secrets"].append({
+            "name": "SPRING_DATASOURCE_PASSWORD",
+            "valueFrom": secret_arn
+        })
 
 output = {
     "family": data["family"],
@@ -242,11 +254,10 @@ with open("new-task-def.json", "w") as f:
     json.dump(output, f)
 """
 
-            sh '''
-            set -e
-            python3 prepare_taskdef.py
-            '''
-        }
+        sh '''
+        set -e
+        python3 prepare_taskdef.py
+        '''
 
         withCredentials([[
             $class: 'AmazonWebServicesCredentialsBinding',
