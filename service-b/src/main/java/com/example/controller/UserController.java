@@ -4,9 +4,12 @@ import java.util.List;
 import java.util.Map;
 
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.example.entity.User;
 import com.example.repository.UserRepository;
 
 
@@ -28,6 +31,20 @@ public class UserController {
                         "name", user.getName(),
                         "email", user.getEmail()))
                 .toList();
+    }
+    
+    @PostMapping("/users")
+    public Map<String, Object> createUser(@RequestParam String name,
+                                          @RequestParam String email) {
+        User user = new User(name, email);
+        User saved = userRepository.save(user);
+
+        return Map.of(
+                "id", saved.getId(),
+                "name", saved.getName(),
+                "email", saved.getEmail(),
+                "status", "created"
+        );
     }
 
     @GetMapping("/ping-db")
