@@ -261,14 +261,29 @@ for c in containers:
         print("DEBUG old image =", c.get("image"))
         c["image"] = image_uri
 
-        if "environment" not in c:
+		 if "environment" not in c:
             c["environment"] = []
 
-        c["environment"] = [e for e in c["environment"] if e.get("name") != "APP_IMAGE_TAG"]
-        c["environment"].append({
-            "name": "APP_IMAGE_TAG",
-            "value": image_uri.split(":")[-1]
-        })
+        keys_to_replace = {
+            "APP_IMAGE_TAG": image_uri.split(":")[-1]
+        }
+
+        if container_name == "service-a-container":
+            keys_to_replace["SPRING_DATASOURCE_URL"] = "jdbc:mysql://appdb.c3ai6e6kuro7.ap-northeast-1.rds.amazonaws.com:3306/appdb?useSSL=false&serverTimezone=Asia/Taipei&characterEncoding=utf8"
+            keys_to_replace["SPRING_DATASOURCE_USERNAME"] = "admin"
+            keys_to_replace["SPRING_DATASOURCE_PASSWORD"] = "Admin1234!"
+            keys_to_replace["SPRING_DATASOURCE_DRIVER_CLASS_NAME"] = "com.mysql.cj.jdbc.Driver"
+
+        c["environment"] = [
+            e for e in c["environment"]
+            if e.get("name") not in keys_to_replace
+        ]
+
+        for k, v in keys_to_replace.items():
+            c["environment"].append({
+                "name": k,
+                "value": v
+            })
 
         print("DEBUG new image =", c.get("image"))
         matched = True
