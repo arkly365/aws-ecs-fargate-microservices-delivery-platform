@@ -8,10 +8,11 @@ pipeline {
     }
 
     environment {
-        AWS_REGION = 'ap-northeast-1'
+        AWS_REGION     = 'ap-northeast-1'
         AWS_ACCOUNT_ID = '854139532460'
-        ECR_BASE = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/aws-ms-lab"
-        CLUSTER_NAME = 'aws-ms-lab-cluster'
+        ECR_BASE       = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/aws-ms-lab"
+        CLUSTER_NAME   = 'aws-ms-lab-cluster'
+        RDS_ENDPOINT   = 'appdb.c3ai6e6kuro7.ap-northeast-1.rds.amazonaws.com'
     }
 
     stages {
@@ -50,9 +51,9 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    def changedFiles = changedFilesRaw ? changedFilesRaw.split("\n") : []
+                    def changedFiles = changedFilesRaw ? changedFilesRaw.split("\\n") : []
 
-                    echo "Changed files:\n${changedFilesRaw}"
+                    echo "Changed files:\\n${changedFilesRaw}"
 
                     if (params.DEPLOY_MODE == 'AUTO') {
                         env.DEPLOY_SERVICE_A = changedFiles.any { it.startsWith('service-a/') } ? "true" : "false"
@@ -114,17 +115,27 @@ def deployService(serviceName) {
     def imageUri = "${env.ECR_BASE}/${serviceName}:${imageTag}"
     def taskFamily = "aws-ms-lab-${serviceName}-task"
 
-    def serviceNameFull
+    def ecsServiceName = ''
+    def dbName = ''
+    def dbPasswordCredentialId = ''
+
     if (serviceName == "service-a") {
-        serviceNameFull = "aws-ms-lab-service-a-task-service-priw3f2z"
+        ecsServiceName = "aws-ms-lab-service-a-task-service-priw3f2z"
+        dbName = "service_db"
+        dbPasswordCredentialId = "rds-service-a-password"
     } else if (serviceName == "service-b") {
-        serviceNameFull = "aws-ms-lab-service-b-task-service"
+        ecsServiceName = "aws-ms-lab-service-b-task-service"
+        dbName = "service_b_db"
+        dbPasswordCredentialId = "rds-service-b-password"
     } else {
         error("Unsupported serviceName: ${serviceName}")
     }
 
     echo "===== DEPLOY ${serviceName} ====="
     echo "IMAGE_URI=${imageUri}"
+    echo "TASK_FAMILY=${taskFamily}"
+    echo "ECS_SERVICE_NAME=${ecsServiceName}"
+    echo "DB_NAME=${dbName}"
 
     dir(serviceName) {
 
@@ -163,14 +174,19 @@ def deployService(serviceName) {
             """
         }
 
-        writeFile file: 'prepare_taskdef.py', text: """
+        withCredentials([string(credentialsId: dbPasswordCredentialId, variable: 'DB_PASSWORD')]) {
+            writeFile file: 'prepare_taskdef.py', text: """
 import json
+import os
 
 with open("current-task-def.json") as f:
     data = json.load(f)
 
 container_name = "${serviceName}-container"
 image_uri = "${imageUri}"
+rds_endpoint = "${env.RDS_ENDPOINT}"
+db_name = "${dbName}"
+db_password = os.environ["DB_PASSWORD"]
 
 for c in data["containerDefinitions"]:
     if c["name"] == container_name:
@@ -180,14 +196,12 @@ for c in data["containerDefinitions"]:
             c["environment"] = []
 
         keys_to_replace = {
-            "APP_IMAGE_TAG": image_uri.split(":")[-1]
+            "APP_IMAGE_TAG": image_uri.split(":")[-1],
+            "SPRING_DATASOURCE_URL": f"jdbc:mysql://{rds_endpoint}:3306/{db_name}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Taipei&characterEncoding=UTF-8",
+            "SPRING_DATASOURCE_USERNAME": "admin",
+            "SPRING_DATASOURCE_PASSWORD": db_password,
+            "SPRING_DATASOURCE_DRIVER_CLASS_NAME": "com.mysql.cj.jdbc.Driver"
         }
-
-        if container_name == "service-a-container":
-            keys_to_replace["SPRING_DATASOURCE_URL"] = "jdbc:mysql://appdb.c3ai6e6kuro7.ap-northeast-1.rds.amazonaws.com:3306/service_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Taipei&characterEncoding=UTF-8"
-            keys_to_replace["SPRING_DATASOURCE_USERNAME"] = "admin"
-            keys_to_replace["SPRING_DATASOURCE_PASSWORD"] = "Admin1234!"
-            keys_to_replace["SPRING_DATASOURCE_DRIVER_CLASS_NAME"] = "com.mysql.cj.jdbc.Driver"
 
         c["environment"] = [
             e for e in c["environment"]
@@ -228,10 +242,11 @@ with open("new-task-def.json", "w") as f:
     json.dump(output, f)
 """
 
-        sh """
-        set -e
-        python3 prepare_taskdef.py
-        """
+            sh '''
+            set -e
+            python3 prepare_taskdef.py
+            '''
+        }
 
         withCredentials([[
             $class: 'AmazonWebServicesCredentialsBinding',
@@ -267,7 +282,7 @@ PY
             set -e
             aws ecs update-service \
               --cluster ${CLUSTER_NAME} \
-              --service ${serviceNameFull} \
+              --service ${ecsServiceName} \
               --task-definition \$(cat new-taskdef-arn.txt) \
               --force-new-deployment \
               --region ${AWS_REGION}
@@ -282,7 +297,7 @@ PY
             set -e
             aws ecs wait services-stable \
               --cluster ${CLUSTER_NAME} \
-              --services ${serviceNameFull} \
+              --services ${ecsServiceName} \
               --region ${AWS_REGION}
             """
         }
