@@ -379,6 +379,7 @@ PY
                 docker volume create "$ZAP_WRK_VOLUME" >/dev/null
 
                 docker run --name "$ZAP_CONTAINER" --rm \
+				  --user root \
                   -v "$ZAP_WRK_VOLUME:/zap/wrk" \
                   zaproxy/zap-stable:latest \
                   zap-baseline.py \
