@@ -384,6 +384,7 @@ PY
                   zap-baseline.py \
                     -t "$TARGET_URL" \
                     -I \
+					--autooff \
                     -J zap-report.json \
                     -r zap-report.html \
                     -w zap-report.md \
