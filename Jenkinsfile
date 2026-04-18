@@ -8,11 +8,12 @@ pipeline {
     }
 
     environment {
-        AWS_REGION     = 'ap-northeast-1'
-        AWS_ACCOUNT_ID = '854139532460'
-        ECR_BASE       = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/aws-ms-lab"
-        CLUSTER_NAME   = 'aws-ms-lab-cluster'
-        RDS_ENDPOINT   = 'appdb.c3ai6e6kuro7.ap-northeast-1.rds.amazonaws.com'
+        AWS_REGION      = 'ap-northeast-1'
+        AWS_ACCOUNT_ID  = '854139532460'
+        ECR_BASE        = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/aws-ms-lab"
+        CLUSTER_NAME    = 'aws-ms-lab-cluster'
+        RDS_ENDPOINT    = 'appdb.c3ai6e6kuro7.ap-northeast-1.rds.amazonaws.com'
+        PUBLIC_BASE_URL = 'https://api.jeremy-tec-lab.site'
 
         SERVICE_A_SECRET_ARN = 'arn:aws:secretsmanager:ap-northeast-1:854139532460:secret:aws-ms-lab/service-a/rds-password-spwtsZ'
         SERVICE_B_SECRET_ARN = 'arn:aws:secretsmanager:ap-northeast-1:854139532460:secret:aws-ms-lab/service-b/rds-password-aYrDfk'
@@ -22,7 +23,7 @@ pipeline {
 
         stage('Checkout SCM') {
             steps {
-				echo 'Pipeline started v3'
+                echo 'Pipeline started v4'
                 checkout scm
             }
         }
@@ -120,7 +121,7 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: '**/current-task-def.json,**/register-output.json,**/new-taskdef-arn.txt,service-a/trivy-report.txt,service-b/trivy-report.txt', allowEmptyArchive: true
+            archiveArtifacts artifacts: '**/current-task-def.json,**/register-output.json,**/new-taskdef-arn.txt,service-a/trivy-report.txt,service-b/trivy-report.txt,service-a/zap-console.txt,service-b/zap-console.txt,service-a/zap-report.html,service-b/zap-report.html,service-a/zap-report.json,service-b/zap-report.json,service-a/zap-report.md,service-b/zap-report.md', allowEmptyArchive: true
         }
     }
 }
@@ -150,7 +151,7 @@ def deployService(String serviceName, String taskFamily, String ecsServiceName, 
         """
 
         // ===== Trivy Scan（non-blocking）=====
-         sh """
+        sh """
         set +e
         echo "===== TRIVY SCAN ${serviceName} START ====="
         echo "PWD=\$(pwd)"
@@ -243,7 +244,6 @@ for c in data["containerDefinitions"]:
             "SPRING_DATASOURCE_DRIVER_CLASS_NAME": "com.mysql.cj.jdbc.Driver"
         }
 
-        # 清掉舊的 environment 值，並移除舊的明碼 password
         c["environment"] = [
             e for e in c["environment"]
             if e.get("name") not in keys_to_replace
@@ -256,13 +256,11 @@ for c in data["containerDefinitions"]:
                 "value": v
             })
 
-        # 清掉舊的 secret，避免重複
         c["secrets"] = [
             s for s in c["secrets"]
             if s.get("name") != "SPRING_DATASOURCE_PASSWORD"
         ]
 
-        # Secrets Manager 是 JSON secret，所以指定取 password key
         c["secrets"].append({
             "name": "SPRING_DATASOURCE_PASSWORD",
             "valueFrom": secret_arn + ":password::"
@@ -354,5 +352,76 @@ PY
               --region ${AWS_REGION}
             """
         }
+
+        // ===== ZAP Baseline Scan（non-blocking）=====
+        sh """
+        set +e
+        echo "===== ZAP SCAN ${serviceName} START ====="
+        echo "PWD=\$(pwd)"
+
+        rm -f zap-console.txt zap-report.html zap-report.json zap-report.md
+
+        if [ "${serviceName}" = "service-a" ]; then
+          TARGET_URL="${PUBLIC_BASE_URL}/api/a/hello"
+        else
+          TARGET_URL="${PUBLIC_BASE_URL}/api/b/hello"
+        fi
+
+        echo "TARGET_URL=\$TARGET_URL"
+
+        ZAP_CONTAINER="zap-${serviceName}-${BUILD_NUMBER}"
+        docker rm -f "\$ZAP_CONTAINER" >/dev/null 2>&1 || true
+
+        docker create --name "\$ZAP_CONTAINER" zaproxy/zap-stable:latest /bin/sh -c '
+          cd /tmp && \
+          zap-baseline.py \
+            -t "'"'\$TARGET_URL'"'"' \
+            -I \
+            -J zap-report.json \
+            -r zap-report.html \
+            -w zap-report.md
+        ' >/dev/null
+
+        docker start -a "\$ZAP_CONTAINER" > zap-console.txt 2>&1
+        ZAP_EXIT_CODE=\$?
+
+        echo "ZAP exit code: \$ZAP_EXIT_CODE"
+
+        docker cp "\$ZAP_CONTAINER:/tmp/zap-report.html" ./zap-report.html >/dev/null 2>&1 || true
+        docker cp "\$ZAP_CONTAINER:/tmp/zap-report.json" ./zap-report.json >/dev/null 2>&1 || true
+        docker cp "\$ZAP_CONTAINER:/tmp/zap-report.md" ./zap-report.md >/dev/null 2>&1 || true
+
+        docker rm -f "\$ZAP_CONTAINER" >/dev/null 2>&1 || true
+
+        echo "===== CHECK ZAP REPORTS ====="
+        ls -lah
+
+        if [ -f zap-console.txt ]; then
+          echo "===== ZAP CONSOLE HEAD ====="
+          head -n 60 zap-console.txt || true
+        else
+          echo "zap-console.txt NOT found"
+          echo "ZAP console output missing" > zap-console.txt
+        fi
+
+        if [ ! -f zap-report.html ]; then
+          echo "<html><body><h1>ZAP report not generated</h1><p>service=${serviceName}</p><p>target=\$TARGET_URL</p><p>exit_code=\$ZAP_EXIT_CODE</p></body></html>" > zap-report.html
+        fi
+
+        if [ ! -f zap-report.json ]; then
+          echo "{\\"message\\":\\"ZAP report not generated\\",\\"service\\":\\"${serviceName}\\",\\"target\\":\\"\$TARGET_URL\\",\\"exit_code\\":\\"\$ZAP_EXIT_CODE\\"}" > zap-report.json
+        fi
+
+        if [ ! -f zap-report.md ]; then
+          echo "# ZAP report not generated" > zap-report.md
+          echo "" >> zap-report.md
+          echo "- service: ${serviceName}" >> zap-report.md
+          echo "- target: \$TARGET_URL" >> zap-report.md
+          echo "- exit_code: \$ZAP_EXIT_CODE" >> zap-report.md
+        fi
+
+        echo "===== ZAP SCAN ${serviceName} END ====="
+        exit 0
+        """
     }
 }
