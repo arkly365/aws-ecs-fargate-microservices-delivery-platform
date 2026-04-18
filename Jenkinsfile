@@ -172,7 +172,7 @@ def deployService(String serviceName, String taskFamily, String ecsServiceName, 
         """
 
         withCredentials([[
-            \$class: 'AmazonWebServicesCredentialsBinding',
+            $class: 'AmazonWebServicesCredentialsBinding',
             credentialsId: 'aws-ms-lab-credentials'
         ]]) {
             sh """
@@ -183,7 +183,7 @@ def deployService(String serviceName, String taskFamily, String ecsServiceName, 
         }
 
         withCredentials([[
-            \$class: 'AmazonWebServicesCredentialsBinding',
+            $class: 'AmazonWebServicesCredentialsBinding',
             credentialsId: 'aws-ms-lab-credentials'
         ]]) {
             sh """
@@ -284,7 +284,7 @@ with open("new-task-def.json", "w") as f:
         '''
 
         withCredentials([[
-            \$class: 'AmazonWebServicesCredentialsBinding',
+            $class: 'AmazonWebServicesCredentialsBinding',
             credentialsId: 'aws-ms-lab-credentials'
         ]]) {
             sh """
@@ -310,7 +310,7 @@ PY
         '''
 
         withCredentials([[
-            \$class: 'AmazonWebServicesCredentialsBinding',
+            $class: 'AmazonWebServicesCredentialsBinding',
             credentialsId: 'aws-ms-lab-credentials'
         ]]) {
             sh """
@@ -325,7 +325,7 @@ PY
         }
 
         withCredentials([[
-            \$class: 'AmazonWebServicesCredentialsBinding',
+            $class: 'AmazonWebServicesCredentialsBinding',
             credentialsId: 'aws-ms-lab-credentials'
         ]]) {
             sh """
