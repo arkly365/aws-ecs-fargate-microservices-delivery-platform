@@ -354,14 +354,15 @@ PY
         }
 
                 // ===== ZAP Baseline Scan（non-blocking）=====
-        script {
+      script {
             def targetUrl = (serviceName == 'service-a')
                 ? "${env.PUBLIC_BASE_URL}/api/a/hello"
                 : "${env.PUBLIC_BASE_URL}/api/b/hello"
 
             withEnv([
                 "TARGET_URL=${targetUrl}",
-                "ZAP_CONTAINER=zap-${serviceName}-${env.BUILD_NUMBER}"
+                "ZAP_CONTAINER=zap-${serviceName}-${env.BUILD_NUMBER}",
+                "ZAP_WRK_VOLUME=zap-${serviceName}-${env.BUILD_NUMBER}-wrk"
             ]) {
                 sh '''
                 set +e
@@ -369,33 +370,41 @@ PY
                 echo "PWD=$(pwd)"
                 echo "TARGET_URL=$TARGET_URL"
                 echo "ZAP_CONTAINER=$ZAP_CONTAINER"
+                echo "ZAP_WRK_VOLUME=$ZAP_WRK_VOLUME"
 
-                rm -f zap-console.txt zap-report.html zap-report.json zap-report.md run-zap.sh
-
-                cat > run-zap.sh <<'EOF'
-#!/bin/sh
-set -e
-cd /tmp
-zap-baseline.py -t "$1" -I -J zap-report.json -r zap-report.html -w zap-report.md
-EOF
-
-                chmod +x run-zap.sh
+                rm -f zap-console.txt zap-report.html zap-report.json zap-report.md
 
                 docker rm -f "$ZAP_CONTAINER" >/dev/null 2>&1 || true
-                docker create --name "$ZAP_CONTAINER" zaproxy/zap-stable:latest tail -f /dev/null >/dev/null
-                docker start "$ZAP_CONTAINER" >/dev/null
+                docker volume rm "$ZAP_WRK_VOLUME" >/dev/null 2>&1 || true
+                docker volume create "$ZAP_WRK_VOLUME" >/dev/null
 
-                docker cp run-zap.sh "$ZAP_CONTAINER:/tmp/run-zap.sh"
-                docker exec "$ZAP_CONTAINER" /tmp/run-zap.sh "$TARGET_URL" > zap-console.txt 2>&1
+                docker run --name "$ZAP_CONTAINER" --rm \
+                  -v "$ZAP_WRK_VOLUME:/zap/wrk" \
+                  zaproxy/zap-stable:latest \
+                  zap-baseline.py \
+                    -t "$TARGET_URL" \
+                    -I \
+                    -J zap-report.json \
+                    -r zap-report.html \
+                    -w zap-report.md \
+                    > zap-console.txt 2>&1
+
                 ZAP_EXIT_CODE=$?
-
                 echo "ZAP exit code: $ZAP_EXIT_CODE"
 
-                docker cp "$ZAP_CONTAINER:/tmp/zap-report.html" ./zap-report.html >/dev/null 2>&1 || true
-                docker cp "$ZAP_CONTAINER:/tmp/zap-report.json" ./zap-report.json >/dev/null 2>&1 || true
-                docker cp "$ZAP_CONTAINER:/tmp/zap-report.md" ./zap-report.md >/dev/null 2>&1 || true
+                docker run --rm -v "$ZAP_WRK_VOLUME:/zap/wrk" alpine:3.20 \
+                  sh -c 'test -f /zap/wrk/zap-report.html && cat /zap/wrk/zap-report.html' \
+                  > zap-report.html 2>/dev/null || true
 
-                docker rm -f "$ZAP_CONTAINER" >/dev/null 2>&1 || true
+                docker run --rm -v "$ZAP_WRK_VOLUME:/zap/wrk" alpine:3.20 \
+                  sh -c 'test -f /zap/wrk/zap-report.json && cat /zap/wrk/zap-report.json' \
+                  > zap-report.json 2>/dev/null || true
+
+                docker run --rm -v "$ZAP_WRK_VOLUME:/zap/wrk" alpine:3.20 \
+                  sh -c 'test -f /zap/wrk/zap-report.md && cat /zap/wrk/zap-report.md' \
+                  > zap-report.md 2>/dev/null || true
+
+                docker volume rm "$ZAP_WRK_VOLUME" >/dev/null 2>&1 || true
 
                 echo "===== CHECK ZAP REPORTS ====="
                 ls -lah
@@ -407,19 +416,19 @@ EOF
                   echo "ZAP console output missing" > zap-console.txt
                 fi
 
-                if [ ! -f zap-report.html ]; then
+                if [ ! -s zap-report.html ]; then
                   cat > zap-report.html <<EOF
 <html><body><h1>ZAP report not generated</h1><p>service=''' + serviceName + '''</p><p>target=$TARGET_URL</p><p>exit_code=$ZAP_EXIT_CODE</p></body></html>
 EOF
                 fi
 
-                if [ ! -f zap-report.json ]; then
+                if [ ! -s zap-report.json ]; then
                   cat > zap-report.json <<EOF
 {"message":"ZAP report not generated","service":"''' + serviceName + '''","target":"$TARGET_URL","exit_code":"$ZAP_EXIT_CODE"}
 EOF
                 fi
 
-                if [ ! -f zap-report.md ]; then
+                if [ ! -s zap-report.md ]; then
                   {
                     echo "# ZAP report not generated"
                     echo ""
