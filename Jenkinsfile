@@ -23,7 +23,7 @@ pipeline {
 
         stage('Checkout SCM') {
             steps {
-                echo 'Pipeline started v4'
+                echo 'Pipeline started v5'
                 checkout scm
             }
         }
@@ -353,13 +353,13 @@ PY
             """
         }
 
-        // ===== ZAP Baseline Scan（non-blocking）=====
+                // ===== ZAP Baseline Scan（non-blocking）=====
         sh """
         set +e
         echo "===== ZAP SCAN ${serviceName} START ====="
         echo "PWD=\$(pwd)"
 
-        rm -f zap-console.txt zap-report.html zap-report.json zap-report.md
+        rm -f zap-console.txt zap-report.html zap-report.json zap-report.md run-zap.sh
 
         if [ "${serviceName}" = "service-a" ]; then
           TARGET_URL="${PUBLIC_BASE_URL}/api/a/hello"
@@ -369,20 +369,22 @@ PY
 
         echo "TARGET_URL=\$TARGET_URL"
 
+        cat > run-zap.sh <<EOF
+#!/bin/sh
+set -e
+cd /tmp
+zap-baseline.py -t "\$1" -I -J zap-report.json -r zap-report.html -w zap-report.md
+EOF
+
+        chmod +x run-zap.sh
+
         ZAP_CONTAINER="zap-${serviceName}-${BUILD_NUMBER}"
         docker rm -f "\$ZAP_CONTAINER" >/dev/null 2>&1 || true
 
-        docker create --name "\$ZAP_CONTAINER" zaproxy/zap-stable:latest /bin/sh -c '
-          cd /tmp && \
-          zap-baseline.py \
-            -t "'"'\$TARGET_URL'"'"' \
-            -I \
-            -J zap-report.json \
-            -r zap-report.html \
-            -w zap-report.md
-        ' >/dev/null
-
-        docker start -a "\$ZAP_CONTAINER" > zap-console.txt 2>&1
+        docker create --name "\$ZAP_CONTAINER" zaproxy/zap-stable:latest /bin/sh >/dev/null
+        docker cp run-zap.sh "\$ZAP_CONTAINER:/tmp/run-zap.sh"
+        docker start "\$ZAP_CONTAINER" >/dev/null
+        docker exec "\$ZAP_CONTAINER" /tmp/run-zap.sh "\$TARGET_URL" > zap-console.txt 2>&1
         ZAP_EXIT_CODE=\$?
 
         echo "ZAP exit code: \$ZAP_EXIT_CODE"
@@ -423,5 +425,7 @@ PY
         echo "===== ZAP SCAN ${serviceName} END ====="
         exit 0
         """
+		
+		
     }
 }
