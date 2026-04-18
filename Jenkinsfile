@@ -22,7 +22,7 @@ pipeline {
 
         stage('Checkout SCM') {
             steps {
-				echo 'Pipeline started v2'
+				echo 'Pipeline started v3'
                 checkout scm
             }
         }
@@ -150,7 +150,7 @@ def deployService(String serviceName, String taskFamily, String ecsServiceName, 
         """
 
         // ===== Trivy Scan（non-blocking）=====
-        sh """
+         sh """
         set +e
         echo "===== TRIVY SCAN ${serviceName} START ====="
         echo "PWD=\$(pwd)"
@@ -159,13 +159,12 @@ def deployService(String serviceName, String taskFamily, String ecsServiceName, 
 
         docker run --rm \
           -v /var/run/docker.sock:/var/run/docker.sock \
-          -v "\$(pwd):/work" \
           aquasec/trivy:latest image \
+          --scanners vuln \
           --severity HIGH,CRITICAL \
           --no-progress \
           --format table \
-          --output /work/trivy-report.txt \
-          ${imageUri}
+          ${imageUri} > trivy-report.txt 2>&1
 
         TRIVY_EXIT_CODE=\$?
         echo "Trivy exit code: \$TRIVY_EXIT_CODE"
