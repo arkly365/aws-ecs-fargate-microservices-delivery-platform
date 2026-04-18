@@ -22,7 +22,7 @@ pipeline {
 
         stage('Checkout SCM') {
             steps {
-				echo 'Pipeline started v1'
+				echo 'Pipeline started v2'
                 checkout scm
             }
         }
@@ -120,7 +120,7 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: '**/current-task-def.json,**/register-output.json,**/new-taskdef-arn.txt,**/trivy-report.txt', allowEmptyArchive: true
+            archiveArtifacts artifacts: '**/current-task-def.json,**/register-output.json,**/new-taskdef-arn.txt,service-a/trivy-report.txt,service-b/trivy-report.txt', allowEmptyArchive: true
         }
     }
 }
@@ -153,10 +153,13 @@ def deployService(String serviceName, String taskFamily, String ecsServiceName, 
         sh """
         set +e
         echo "===== TRIVY SCAN ${serviceName} START ====="
+        echo "PWD=\$(pwd)"
+
+        rm -f trivy-report.txt
 
         docker run --rm \
           -v /var/run/docker.sock:/var/run/docker.sock \
-          -v \$(pwd):/work \
+          -v "\$(pwd):/work" \
           aquasec/trivy:latest image \
           --severity HIGH,CRITICAL \
           --no-progress \
@@ -166,8 +169,24 @@ def deployService(String serviceName, String taskFamily, String ecsServiceName, 
 
         TRIVY_EXIT_CODE=\$?
         echo "Trivy exit code: \$TRIVY_EXIT_CODE"
-        echo "===== TRIVY SCAN ${serviceName} END ====="
 
+        echo "===== CHECK TRIVY REPORT ====="
+        ls -lah
+        if [ -f trivy-report.txt ]; then
+          echo "trivy-report.txt found"
+          echo "===== TRIVY REPORT HEAD ====="
+          head -n 40 trivy-report.txt || true
+        else
+          echo "trivy-report.txt NOT found, create placeholder"
+          {
+            echo "Trivy report was not generated."
+            echo "service=${serviceName}"
+            echo "image=${imageUri}"
+            echo "trivy_exit_code=\$TRIVY_EXIT_CODE"
+          } > trivy-report.txt
+        fi
+
+        echo "===== TRIVY SCAN ${serviceName} END ====="
         exit 0
         """
 
