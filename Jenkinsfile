@@ -22,6 +22,7 @@ pipeline {
 
         stage('Checkout SCM') {
             steps {
+				echo 'Pipeline started v1'
                 checkout scm
             }
         }
@@ -119,7 +120,7 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: '**/current-task-def.json,**/register-output.json,**/new-taskdef-arn.txt', allowEmptyArchive: true
+            archiveArtifacts artifacts: '**/current-task-def.json,**/register-output.json,**/new-taskdef-arn.txt,**/trivy-report.txt', allowEmptyArchive: true
         }
     }
 }
@@ -148,8 +149,30 @@ def deployService(String serviceName, String taskFamily, String ecsServiceName, 
         docker build -t ${imageUri} .
         """
 
+        // ===== Trivy Scan（non-blocking）=====
+        sh """
+        set +e
+        echo "===== TRIVY SCAN ${serviceName} START ====="
+
+        docker run --rm \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          -v \$(pwd):/work \
+          aquasec/trivy:latest image \
+          --severity HIGH,CRITICAL \
+          --no-progress \
+          --format table \
+          --output /work/trivy-report.txt \
+          ${imageUri}
+
+        TRIVY_EXIT_CODE=\$?
+        echo "Trivy exit code: \$TRIVY_EXIT_CODE"
+        echo "===== TRIVY SCAN ${serviceName} END ====="
+
+        exit 0
+        """
+
         withCredentials([[
-            $class: 'AmazonWebServicesCredentialsBinding',
+            \$class: 'AmazonWebServicesCredentialsBinding',
             credentialsId: 'aws-ms-lab-credentials'
         ]]) {
             sh """
@@ -160,7 +183,7 @@ def deployService(String serviceName, String taskFamily, String ecsServiceName, 
         }
 
         withCredentials([[
-            $class: 'AmazonWebServicesCredentialsBinding',
+            \$class: 'AmazonWebServicesCredentialsBinding',
             credentialsId: 'aws-ms-lab-credentials'
         ]]) {
             sh """
@@ -261,7 +284,7 @@ with open("new-task-def.json", "w") as f:
         '''
 
         withCredentials([[
-            $class: 'AmazonWebServicesCredentialsBinding',
+            \$class: 'AmazonWebServicesCredentialsBinding',
             credentialsId: 'aws-ms-lab-credentials'
         ]]) {
             sh """
@@ -287,7 +310,7 @@ PY
         '''
 
         withCredentials([[
-            $class: 'AmazonWebServicesCredentialsBinding',
+            \$class: 'AmazonWebServicesCredentialsBinding',
             credentialsId: 'aws-ms-lab-credentials'
         ]]) {
             sh """
@@ -302,7 +325,7 @@ PY
         }
 
         withCredentials([[
-            $class: 'AmazonWebServicesCredentialsBinding',
+            \$class: 'AmazonWebServicesCredentialsBinding',
             credentialsId: 'aws-ms-lab-credentials'
         ]]) {
             sh """
