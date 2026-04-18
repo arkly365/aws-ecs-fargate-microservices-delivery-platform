@@ -381,10 +381,10 @@ EOF
         ZAP_CONTAINER="zap-${serviceName}-${BUILD_NUMBER}"
         docker rm -f "\$ZAP_CONTAINER" >/dev/null 2>&1 || true
 
-        docker create --name "\$ZAP_CONTAINER" zaproxy/zap-stable:latest /bin/sh >/dev/null
-        docker cp run-zap.sh "\$ZAP_CONTAINER:/tmp/run-zap.sh"
-        docker start "\$ZAP_CONTAINER" >/dev/null
-        docker exec "\$ZAP_CONTAINER" /tmp/run-zap.sh "\$TARGET_URL" > zap-console.txt 2>&1
+        docker create --name "$ZAP_CONTAINER" zaproxy/zap-stable:latest tail -f /dev/null >/dev/null
+        docker cp run-zap.sh "$ZAP_CONTAINER:/tmp/run-zap.sh"
+        docker start "$ZAP_CONTAINER" >/dev/null
+        docker exec "$ZAP_CONTAINER" /tmp/run-zap.sh "$TARGET_URL" > zap-console.txt 2>&1
         ZAP_EXIT_CODE=\$?
 
         echo "ZAP exit code: \$ZAP_EXIT_CODE"
