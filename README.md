@@ -10,7 +10,7 @@
 - 使用 **ALB + Path Routing** 分流：
   - `/api/a/*` → `service-a`
   - `/api/b/*` → `service-b`
-- 使用 **HTTPS + 自訂網域**
+- 使用 **ACM + HTTPS + 自訂網域** 建立對外安全 API（含 HTTP → HTTPS redirect）
 - 使用 **RDS MySQL**，採 **schema 分離**
 - 建立 **Jenkins CI/CD Pipeline**：
   - build
@@ -25,6 +25,29 @@
 - 使用 **CloudWatch Logs / Dashboard** 建立基本觀測能力
 - 使用 **JSON Logging + Correlation ID** 改善微服務除錯與追蹤
 - 使用 **ECS Auto Scaling** 驗證 CPU-based scale out
+---
+  ### 本專案不僅提供 HTTP API，而是實作完整的 **HTTPS 對外服務架構**，確保傳輸安全與正式環境一致性。
+
+### 實作內容
+
+- 使用 **AWS Certificate Manager (ACM)** 申請 SSL 憑證
+- 透過 **DNS Validation** 完成網域驗證
+- 將憑證綁定至 **ALB 443 Listener**
+- 設定 **HTTP (80) → HTTPS (443) 自動轉導**
+- 所有 API 僅透過 HTTPS 對外提供服務
+
+### 架構設計
+
+- TLS Termination 發生於 ALB
+- ECS Fargate container 保持內部 HTTP 通訊
+- 對外流量強制加密，符合現代 Web 安全標準
+
+### 實務價值
+
+- 模擬正式環境的對外 API 安全設計
+- 避免明文傳輸（MitM 風險）
+- 提供可被瀏覽器信任的憑證
+- 展現雲端平台中「網路安全 + 憑證管理」能力
 
 ---
 
