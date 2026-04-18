@@ -1,6 +1,6 @@
 一個以 **AWS ECS Fargate** 為核心的雲端微服務實戰專案，整合 **ALB / HTTPS / RDS / Jenkins CI/CD / ECR / ECS / Secrets Manager / Trivy / OWASP ZAP / CloudWatch**，打造可部署、可觀測、可掃描、可展示的微服務平台。
 
-本專案的目標不是只把 Spring Boot 丟上雲端，而是實作一套更接近正式環境的 **Cloud + DevOps + DevSecOps** 交付流程，作為履歷與面試展示作品。
+本專案的目標不是只把 Spring Boot 丟上雲端，而是實作一套更接近正式環境的 **Cloud + DevOps + DevSecOps** 交付流程的展示作品。
 
 ---
 
@@ -64,8 +64,6 @@ flowchart TD
 ```
 ---
 
----
-
 ## CI/CD 流程
 
 本專案使用 Jenkins 建立微服務 CI/CD Pipeline，流程如下：
@@ -121,3 +119,53 @@ flowchart TD
 - 使用 **ECS Auto Scaling**
 - 依 CPU 使用率進行 scale out / scale in
 - 已透過壓測驗證服務具備基本彈性擴展能力
+---
+  ## 專案目錄結構
+```  
+aws-ecs-fargate-microservices-delivery-platform/
+├── Jenkinsfile
+├── service-a/
+│ ├── Dockerfile
+│ ├── pom.xml
+│ └── src/
+├── service-b/
+│ ├── Dockerfile
+│ ├── pom.xml
+│ └── src/
+├── jenkins/
+│ └── pipeline-config/
+├── docs/
+│ ├── architecture.md
+│ ├── ci-cd.md
+│ ├── devsecops.md
+│ ├── demo-script.md
+│ └── interview-notes.md
+└── README.md
+```
+---
+## Deployment 流程
+
+本專案採用 Jenkins + AWS ECS Fargate 進行自動化部署：
+
+### 流程說明
+
+1. 開發者 push 程式碼到 GitHub
+2. GitHub webhook 觸發 Jenkins Pipeline
+3. Jenkins 執行：
+   - Maven build
+   - Docker build
+   - Trivy image scan
+4. 將 image push 至 Amazon ECR
+5. 更新 ECS Task Definition（新 image tag）
+6. 觸發 ECS Service rollout（Rolling Deployment）
+7. ALB 自動將流量導向新版本 container
+8. OWASP ZAP 進行 API 安全掃描（non-blocking）
+
+### 驗證方式
+
+- Jenkins pipeline 成功
+- ECR 出現新 image tag（build-xx）
+- ECS service 出現新 deployment
+- ALB `/api/a` `/api/b` 回應正常
+- CloudWatch logs 顯示新 container 正常啟動
+  
