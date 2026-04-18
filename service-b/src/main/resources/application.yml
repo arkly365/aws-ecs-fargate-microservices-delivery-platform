@@ -45,5 +45,3 @@ logging:
     root: INFO
     org.hibernate.SQL: INFO
     org.hibernate.orm.jdbc.bind: INFO
-  pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} [%X{traceId}] %-5level %logger - %msg%n"

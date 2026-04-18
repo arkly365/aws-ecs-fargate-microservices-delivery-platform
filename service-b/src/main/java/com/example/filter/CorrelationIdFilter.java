@@ -4,6 +4,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -14,6 +16,7 @@ import java.util.UUID;
 @Component
 public class CorrelationIdFilter extends OncePerRequestFilter {
 
+    private static final Logger log = LoggerFactory.getLogger(CorrelationIdFilter.class);
     private static final String HEADER = "X-Correlation-Id";
 
     @Override
@@ -22,19 +25,43 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
                                     FilterChain filterChain)
             throws ServletException, IOException {
 
-        String traceId = request.getHeader(HEADER);
+        long start = System.currentTimeMillis();
 
-        if (traceId == null || traceId.isEmpty()) {
+        String traceId = request.getHeader(HEADER);
+        if (traceId == null || traceId.isBlank()) {
             traceId = UUID.randomUUID().toString();
         }
 
-        MDC.put("traceId", traceId);
-        response.setHeader(HEADER, traceId);
+        String queryString = request.getQueryString();
 
         try {
+            MDC.put("traceId", traceId);
+            MDC.put("method", request.getMethod());
+            MDC.put("path", request.getRequestURI());
+            MDC.put("query", queryString == null ? "" : queryString);
+            MDC.put("clientIp", getClientIp(request));
+
+            response.setHeader(HEADER, traceId);
+
             filterChain.doFilter(request, response);
+
         } finally {
+            long durationMs = System.currentTimeMillis() - start;
+
+            MDC.put("status", String.valueOf(response.getStatus()));
+            MDC.put("durationMs", String.valueOf(durationMs));
+
+            log.info("Request completed");
+
             MDC.clear();
         }
+    }
+
+    private String getClientIp(HttpServletRequest request) {
+        String xForwardedFor = request.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isBlank()) {
+            return xForwardedFor.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
     }
 }

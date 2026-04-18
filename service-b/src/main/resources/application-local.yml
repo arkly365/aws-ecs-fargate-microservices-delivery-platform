@@ -1,15 +1,11 @@
 server:
-  port: ${SERVER_PORT:8080}
+  port: ${SERVER_PORT:8083}
 
 spring:
-  application:
-    name: service-a
-
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/service_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Taipei&characterEncoding=UTF-8}
-    username: ${SPRING_DATASOURCE_USERNAME:root}
-    password: ${SPRING_DATASOURCE_PASSWORD:root}
-    driver-class-name: ${SPRING_DATASOURCE_DRIVER_CLASS_NAME:com.mysql.cj.jdbc.Driver}
+    url: jdbc:mysql://appdb.c3ai6e6kuro7.ap-northeast-1.rds.amazonaws.com:3306/service_b_db?useSSL=false&serverTimezone=Asia/Taipei
+    username: admin
+    password: Admin1234!
 
   jpa:
     hibernate:

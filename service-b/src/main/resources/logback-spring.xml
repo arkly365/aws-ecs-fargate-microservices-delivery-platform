@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <springProperty scope="context" name="appName" source="spring.application.name"/>
+
+    <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+
+                <timestamp>
+                    <fieldName>timestamp</fieldName>
+                    <timeZone>Asia/Taipei</timeZone>
+                </timestamp>
+
+                <logLevel>
+                    <fieldName>level</fieldName>
+                </logLevel>
+
+                <threadName>
+                    <fieldName>thread</fieldName>
+                </threadName>
+
+                <loggerName>
+                    <fieldName>logger</fieldName>
+                </loggerName>
+
+                <mdc/>
+
+                <pattern>
+                    <pattern>
+                        {
+                          "service": "${appName:-unknown-service}",
+                          "message": "%message"
+                        }
+                    </pattern>
+                </pattern>
+
+                <stackTrace>
+                    <fieldName>stackTrace</fieldName>
+                </stackTrace>
+
+            </providers>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="JSON_CONSOLE"/>
+    </root>
+
+</configuration>
